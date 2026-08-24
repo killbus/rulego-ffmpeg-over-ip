@@ -1,5 +1,5 @@
 {
-  "pluginVersion": "0.1.0",
+  "pluginVersion": "0.1.1",
   "go": "1.25.0",
   "goos": "linux",
   "goarch": ["amd64", "arm64"],

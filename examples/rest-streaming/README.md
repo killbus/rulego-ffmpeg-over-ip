@@ -1,8 +1,9 @@
 # Generic REST streaming example
 
-Load `chain.json` in the pinned, plugin-enabled RuleGo host, place the matching
-`.so` under its configured `data/plugins` directory, and define the global
-`ffmpeg_over_ip_auth_secret`.
+From a repository checkout, load `examples/rest-streaming/chain.json`. From a
+release bundle, load `example-chain.json`. Use the pinned, plugin-enabled
+RuleGo host, place the matching `.so` under its configured `data/plugins`
+directory, and define the global `ffmpeg_over_ip_auth_secret`.
 
 The route accepts an invocation JSON body at `POST /ffmpeg`. Its
 `setBinaryDataType` input processor selects the generic

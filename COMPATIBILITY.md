@@ -1,6 +1,6 @@
 # Compatibility
 
-The v0.1.0 plugin ABI is pinned to this tuple:
+The v0.1.1 plugin ABI is pinned to this tuple:
 
 - Go 1.25.0, Linux, `CGO_ENABLED=1`, `-buildmode=plugin`
 - RuleGo server revision `3bf4ac47bb49aff9fe048e35644a6bca6e8e2af3`
