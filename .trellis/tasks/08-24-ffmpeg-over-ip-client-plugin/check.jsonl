@@ -1,0 +1,4 @@
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Check that adapted upstream behavior is minimal, attributed, and not duplicated across layers."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Verify the complete data flow and ownership at every boundary."}
+{"file":".trellis/tasks/08-24-ffmpeg-over-ip-client-plugin/research/rulego-contract.md","reason":"Check output relations, cancellation propagation, REST flushing, and ABI claims against pinned RuleGo evidence."}
+{"file":".trellis/tasks/08-24-ffmpeg-over-ip-client-plugin/research/ffmpeg-over-ip-contract.md","reason":"Check protocol, authentication, file operations, buffering, cleanup, and license scope against upstream v5.2.1."}

@@ -1,0 +1,60 @@
+{
+  "ruleChain": {
+    "id": "ffmpeg-over-ip-stream",
+    "name": "Generic ffmpeg-over-ip streaming endpoint",
+    "root": true
+  },
+  "metadata": {
+    "firstNodeIndex": 0,
+    "endpoints": [
+      {
+        "id": "http",
+        "type": "endpoint/http",
+        "name": "ffmpeg-over-ip invocation API",
+        "configuration": {
+          "server": ":8080",
+          "readTimeout": 30,
+          "writeTimeout": 86400
+        },
+        "routers": [
+          {
+            "id": "invoke",
+            "params": ["POST"],
+            "from": {
+              "path": "/ffmpeg",
+              "processors": ["setBinaryDataType"]
+            },
+            "to": {
+              "path": "ffmpeg-over-ip-stream:client",
+              "wait": true,
+              "processors": ["ffmpegOverIpResponse"]
+            }
+          }
+        ]
+      }
+    ],
+    "nodes": [
+      {
+        "id": "client",
+        "type": "ffmpegOverIp",
+        "name": "Remote ffmpeg invocation",
+        "configuration": {
+          "address": "127.0.0.1:5050",
+          "authSecret": "${global.ffmpeg_over_ip_auth_secret}",
+          "dialTimeoutMs": 5000,
+          "sessionTimeoutMs": 0
+        }
+      },
+      {
+        "id": "end",
+        "type": "end",
+        "name": "Invocation event"
+      }
+    ],
+    "connections": [
+      {"fromId": "client", "toId": "end", "type": "Stream"},
+      {"fromId": "client", "toId": "end", "type": "Success"},
+      {"fromId": "client", "toId": "end", "type": "Failure"}
+    ]
+  }
+}

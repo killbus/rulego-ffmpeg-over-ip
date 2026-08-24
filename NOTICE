@@ -1,0 +1,13 @@
+This product contains code adapted from steelbrain/ffmpeg-over-ip:
+
+  Release: v5.2.1
+  Commit:  ab7adfeedf2a50f7e5807beef9088609cce645d6
+  Source:  internal/auth/auth.go, internal/protocol/wire.go,
+           internal/filehandler/handler.go, internal/session/writer.go,
+           and cmd/client/main.go
+  License: MIT
+  Copyright (c) 2026 Anees Iqbal
+
+The upstream fio/ and patches/ trees are GPL-3.0. They are not copied into or
+linked by this plugin. They are used only by the pinned upstream integration
+job to build the external test server's FFmpeg executable.

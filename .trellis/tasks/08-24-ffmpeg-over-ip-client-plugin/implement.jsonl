@@ -1,0 +1,4 @@
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Use the smallest honest adaptation of the upstream client code and avoid speculative interfaces."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Preserve the RuleGo message, protocol frame, REST response, CI ABI, and deployment boundaries."}
+{"file":".trellis/tasks/08-24-ffmpeg-over-ip-client-plugin/research/rulego-contract.md","reason":"Implement against the verified RuleGo plugin, relation, context, and REST callback behavior."}
+{"file":".trellis/tasks/08-24-ffmpeg-over-ip-client-plugin/research/ffmpeg-over-ip-contract.md","reason":"Implement the pinned protocol-v6 client session and MIT-only reuse boundary."}

@@ -1,0 +1,147 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  GO_VERSION: 1.25.0
+  RULEGO_REVISION: 3bf4ac47bb49aff9fe048e35644a6bca6e8e2af3
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      - run: go mod download
+      - name: Formatting
+        run: test -z "$(gofmt -l .)"
+      - run: go vet ./...
+      - run: go test ./...
+      - run: go test -race ./...
+
+  pinned-upstream:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      - uses: actions/checkout@v4
+        with:
+          repository: steelbrain/ffmpeg-over-ip
+          ref: ab7adfeedf2a50f7e5807beef9088609cce645d6
+          submodules: recursive
+          path: upstream
+      - name: Build pinned patched FFmpeg and server
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential nasm yasm patch quilt
+          (cd upstream && ./scripts/build-ffmpeg.sh --minimal)
+          mkdir -p upstream/run/bin
+          (cd upstream && go build -o run/bin/ffmpeg-over-ip-server ./cmd/server)
+          cp upstream/build/ffmpeg/bin/ffmpeg upstream/run/bin/ffmpeg
+          cp upstream/build/ffmpeg/bin/ffprobe upstream/run/bin/ffprobe
+      - name: Test authenticated TCP and Unix sessions
+        run: |
+          set -euo pipefail
+          mkdir -p tmp
+          run_server_test() {
+            address="$1"
+            config="tmp/ffmpeg-over-ip.server.json"
+            printf '{"log":false,"address":"%s","authSecret":"integration-secret","debug":false}\n' "$address" > "$config"
+            upstream/run/bin/ffmpeg-over-ip-server --config "$config" >tmp/server.log 2>&1 &
+            server_pid=$!
+            trap 'kill "$server_pid" 2>/dev/null || true; wait "$server_pid" 2>/dev/null || true; rm -f "$config"' RETURN
+            for attempt in $(seq 1 100); do
+              if [[ "$address" == unix:* ]]; then
+                test -S "${address#unix:}" && break
+              elif (echo > /dev/tcp/127.0.0.1/25050) 2>/dev/null; then
+                break
+              fi
+              sleep 0.1
+            done
+            FFOIP_INTEGRATION_ADDRESS="$address" go test ./client -run '^TestPinnedUpstreamServer$' -count=1
+            kill "$server_pid"
+            wait "$server_pid" || true
+            trap - RETURN
+            rm -f "$config"
+          }
+          run_server_test 127.0.0.1:25050
+          run_server_test "unix:$PWD/tmp/ffmpeg-over-ip.sock"
+
+  build:
+    strategy:
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            arch: amd64
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: plugin
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: plugin/go.sum
+      - uses: actions/checkout@v4
+        with:
+          repository: rulego/rulego
+          ref: ${{ env.RULEGO_REVISION }}
+          path: rulego-host
+      - name: Build versioned plugin
+        run: |
+          test "$(go env GOARCH)" = "${{ matrix.arch }}"
+          mkdir -p plugin/dist plugin/tmp
+          (cd plugin/tmp && go work init .. ../../rulego-host/server)
+          GOWORK="$GITHUB_WORKSPACE/plugin/tmp/go.work" CGO_ENABLED=1 go build -buildmode=plugin -trimpath -o "plugin/dist/ffmpeg-over-ip-rulego-v$(cat plugin/VERSION)-linux-${{ matrix.arch }}.so" ./plugin
+          (cd plugin/dist && sha256sum *.so > "ffmpeg-over-ip-rulego-v$(cat ../VERSION)-linux-${{ matrix.arch }}.so.sha256")
+      - name: Verify pinned ABI and plugin loading
+        run: |
+          set -euo pipefail
+          grep -F 'github.com/rulego/rulego v0.37.1-0.20260816112453-8995627f6da7' rulego-host/server/go.mod
+          mkdir -p rulego-host/server/data/plugins
+          cp plugin/dist/*.so rulego-host/server/data/plugins/
+          (cd rulego-host/server && GOWORK="$GITHUB_WORKSPACE/plugin/tmp/go.work" CGO_ENABLED=1 go build -trimpath -o "$GITHUB_WORKSPACE/plugin/tmp/rulego-server" ./cmd/server)
+          (cd rulego-host/server && "$GITHUB_WORKSPACE/plugin/tmp/rulego-server" -c config.conf >"$GITHUB_WORKSPACE/plugin/tmp/host.log" 2>&1 & echo $! >"$GITHUB_WORKSPACE/plugin/tmp/host.pid")
+          trap 'kill "$(cat plugin/tmp/host.pid)" 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 100); do
+            curl --fail --silent http://127.0.0.1:9090/api/v1/components >plugin/tmp/components.json && break
+            sleep 0.2
+          done
+          jq -e '.nodes | any(.type == "ffmpegOverIp")' plugin/tmp/components.json
+          jq -e '.builtins.endpoints.outProcessors | index("ffmpegOverIpResponse") != null' plugin/tmp/components.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: plugin-linux-${{ matrix.arch }}
+          path: |
+            plugin/dist/*.so
+            plugin/dist/*.sha256
+          if-no-files-found: error
+
+  release-metadata:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Collect release metadata
+        run: |
+          mkdir dist
+          cp LICENSE NOTICE COMPATIBILITY.md compatibility.json dist/
+          cp examples/rest-streaming/chain.json dist/example-chain.json
+          cp examples/rest-streaming/README.md dist/example-README.md
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-metadata
+          path: dist/
