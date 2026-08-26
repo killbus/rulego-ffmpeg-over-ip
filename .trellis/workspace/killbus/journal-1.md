@@ -35,3 +35,24 @@ Published and validated v0.1.1, recorded the all-PROVEN completion evidence, and
 ### Status
 
 [OK] **Completed**
+
+
+## Session 2: Publish RuleGo plugin with host SDK
+
+**Date**: 2026-08-26
+**Task**: Publish RuleGo plugin with host SDK
+**Branch**: `master`
+
+### Summary
+
+Published v0.2.0 from CI-built amd64/arm64 plugins using TEAM B's digest-pinned RuleGo Plugin SDK and matching runtime; verified checksums, ABI sidecars, release metadata, and all 13 release assets.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `318858fe8184db79645715e7246c1299c0ff7f6b` | (see git log) |
+
+### Status
+
+[OK] **Completed**

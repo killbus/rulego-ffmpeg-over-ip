@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 1
-- **Last Active**: 2026-08-24
+- **Total Sessions**: 2
+- **Last Active**: 2026-08-26
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~37 | Active |
+| `journal-1.md` | ~58 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 2 | 2026-08-26 | Publish RuleGo plugin with host SDK | `318858fe8184db79645715e7246c1299c0ff7f6b` | `master` |
 | 1 | 2026-08-24 | Release ffmpeg-over-ip RuleGo plugin | `8f7bd87aa0aceb30da1db272f0a778470c6fc673` | `master` |
 <!-- @@@/auto:session-history -->
 
