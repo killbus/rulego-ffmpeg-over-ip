@@ -2,6 +2,41 @@
 
 Canonical contract: `/home/agent/Src/stream-prism/.trellis/spec/guides/delivery-governance.md`
 
+## Active Delivery
+
+- Goal ID: `ffmpeg-over-ip-client-plugin-v1`
+- Observable outcome: publish the same complete ffmpeg-over-ip RuleGo client
+  capability as SDK-built native plugins that load in the host distributor's
+  matching plugin runtime.
+- Acceptance identity: R1-R13 and AC1-AC12 as currently recorded in `prd.md`.
+- Authoritative build input: TEAM B workflow run `32948070511`, revision
+  `a498c9e29b0121e5495557ecc88c4a5df9150637`, and its reviewed
+  `plugin-abi-release.json` artifact.
+- Scope: dependency alignment, release metadata, SDK build, matching-runtime
+  load verification, and publication of a new immutable plugin release.
+- Non-goals: plugin behavior changes, another ABI schema, another build helper,
+  a plugin container image, or rewriting `v0.1.1`.
+- Current phase: `EXECUTE`; the prior delivery record below remains immutable
+  historical evidence and is not evidence that the active delivery is done.
+
+## Active Gate Evidence
+
+- TEAM B release evidence: workflow run `32948070511` succeeded at
+  `a498c9e29b0121e5495557ecc88c4a5df9150637`; the downloaded release record is
+  byte-identical to the committed `plugin-abi-release.json` and resolves to
+  native Linux amd64/arm64 SDK and runtime indexes.
+- Quality gate: `PASS`; lightweight module, formatting, JSON, version, stale
+  reference, shell, workflow syntax, and diff checks passed. Heavy build and
+  runtime checks remain assigned to GitHub Actions.
+- Pre-commit path gate: independent read-only reviewer returned `CONTINUE` for
+  candidate cursor `866db09d…e67f8ae`; the capability is unchanged, the ABI
+  authority is singular, and no helper or local build path was added.
+- Retry evidence: implementer, quality checker, and path reviewer each resumed
+  the same `ffmpeg-over-ip-client-plugin-v1` goal after provider disconnects or
+  rate limits; no retry changed scope, authority, or candidate intent.
+- Next transition: commit the candidate, push `master`, then use the resulting
+  GitHub Actions run as the build and runtime-load authority.
+
 ## Final Delivery Record
 
 - Goal ID: `ffmpeg-over-ip-client-plugin-v1`

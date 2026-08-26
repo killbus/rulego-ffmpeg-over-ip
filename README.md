@@ -46,8 +46,11 @@ The REST processor writes and flushes only stdout. The generic example is in
 
 ## Build
 
-Release binaries are built in GitHub Actions. Go plugin ABI requirements make
-local ad-hoc builds unsafe for deployment; see [COMPATIBILITY.md](COMPATIBILITY.md).
+Release binaries are built in GitHub Actions with the digest-pinned SDK in
+[`plugin-abi-release.json`](plugin-abi-release.json), then smoke-loaded by its
+matching runtime. Each `.so` ships with `.sha256` and `.abi.json` sidecars. Go
+plugin ABI requirements make local ad-hoc builds unsafe for deployment; see
+[COMPATIBILITY.md](COMPATIBILITY.md).
 
 This plugin does not provide a server, local-process fallback, TLS, retry,
 failover, media discovery, codec/container policy, or response headers beyond

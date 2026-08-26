@@ -23,10 +23,9 @@ calling rule graph and deployment configuration.
 - The current ffmpeg-over-ip reusable implementation is under Go `internal/`
   packages and its executable entry point uses process-global CLI facilities;
   it cannot be imported unchanged by an independent plugin module.
-- Go plugins must be built against an ABI-compatible RuleGo dependency graph
-  and Go toolchain. RuleGo's stock release binaries are built with
-  `CGO_ENABLED=0`; the compatibility target is therefore an unmodified but
-  source-built, plugin-enabled RuleGo host, not an arbitrary stock binary.
+- The RuleGo host distributor publishes one lock-derived Plugin ABI release
+  record containing immutable SDK and runtime image digests. The SDK builds
+  the plugin and its ABI sidecar; the matching runtime is the load target.
 
 ## Requirements
 
@@ -67,9 +66,10 @@ calling rule graph and deployment configuration.
 - **R10 — Domain neutrality:** The plugin must not discover media, select
   formats/codecs, construct domain-specific FFmpeg recipes, select containers,
   publish URLs, or contain caller-specific policy.
-- **R11 — Delivery:** Produce a versioned `.so` plus checksum and a minimal
-  generic RuleGo example, built in CI against an explicitly pinned RuleGo and
-  Go version. Heavy compilation does not run locally.
+- **R11 — Delivery:** Produce a versioned `.so`, SDK-generated checksum and ABI
+  sidecar, the consumed Plugin ABI release record, and a minimal generic RuleGo
+  example. CI builds with the record's immutable SDK digest and load-tests with
+  its matching runtime digest. Heavy compilation does not run locally.
 - **R12 — REST projection:** Register the minimum RuleGo output processor needed
   for a REST Endpoint to write only stdout chunks and flush after each chunk.
   stderr and terminal records must remain available to rule relations without
@@ -80,11 +80,10 @@ calling rule graph and deployment configuration.
 
 ## Acceptance Criteria
 
-- [ ] **AC1:** An unmodified, source-built plugin-enabled RuleGo host using the
-  release's declared server revision, core module, Go toolchain, architecture,
-  and build mode loads the `.so` through its normal plugin loader and
-  instantiates the advertised component. Stock `CGO_ENABLED=0` binaries are
-  explicitly identified as incompatible.
+- [ ] **AC1:** On native Linux amd64 and arm64 runners, the digest-pinned RuleGo
+  Plugin SDK builds the `.so` and sidecar, and the matching digest-pinned
+  runtime loads it through its normal plugin loader and advertises both
+  `ffmpegOverIp` and `ffmpegOverIpResponse`.
 - [ ] **AC2:** A test server observes the exact selected program and argv vector,
   including arguments containing spaces and punctuation; no shell is involved.
 - [ ] **AC3:** Against an actual pinned ffmpeg-over-ip v5.2.1 server, correct
@@ -112,9 +111,9 @@ calling rule graph and deployment configuration.
 - [ ] **AC9:** a generic REST Endpoint example progressively returns stdout from
   an ffmpeg-over-ip invocation without the plugin containing HTTP route or media
   provider policy.
-- [ ] **AC10:** CI builds and tests the pinned compatibility target and publishes
-  Linux amd64 and arm64 `.so` files and checksums; no container image is
-  required for acceptance.
+- [ ] **AC10:** CI publishes Linux amd64 and arm64 `.so`, `.sha256`, and
+  `.abi.json` files together with the exact Plugin ABI release record; the
+  plugin repository publishes no container image.
 - [ ] **AC11:** The node accepts a JSON invocation containing `program`, exact
   `args`, and optional base64 stdin, forwards stdin then EOF, emits raw stdout
   and stderr on `Stream` with distinct channel metadata, and emits exactly one
@@ -140,6 +139,4 @@ calling rule graph and deployment configuration.
 - Local-process execution or shell execution.
 - A stateful multi-message interactive stdin API. One invocation may carry an
   optional finite stdin payload; the node forwards it and then sends EOF.
-- Compatibility with arbitrary RuleGo or Go builds outside the release's
-  declared ABI tuple, including stock RuleGo binaries built without Go plugin
-  support.
+- Compatibility with hosts outside the consumed Plugin ABI release record.

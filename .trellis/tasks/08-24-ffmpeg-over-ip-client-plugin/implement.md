@@ -2,10 +2,10 @@
 
 ## 1. Establish the pinned module and legal boundary
 
-- Create the Go module at the repository's real import path.
-- Pin RuleGo server revision `3bf4ac47bb49aff9fe048e35644a6bca6e8e2af3`,
-  core module `8995627f6da7bd6d819475373c324cf249af0a13`, and the
-  selected Go toolchain/build mode.
+- Keep the Go module at the repository's real import path.
+- Commit the reviewed host-distributor ABI release record and align the RuleGo
+  core dependency to that contract. Do not duplicate its toolchain or module
+  graph as a second source of truth.
 - Add the upstream MIT notice and a machine-readable source/version note for
   ffmpeg-over-ip `v5.2.1` / `ab7adfeed`.
 - Do not import or copy upstream GPL `fio/` or `patches/` content.
@@ -58,9 +58,8 @@ response filtering.
 - In CI, build and start the actual pinned upstream v5.2.1 server and exercise
   authenticated TCP and Unix-socket sessions whose real FFmpeg process writes
   deterministic binary bytes to `pipe:1`.
-- Source-build and exercise the unmodified target RuleGo server with Go plugin
-  support and the pinned ABI tuple; document that stock `CGO_ENABLED=0` binaries
-  cannot load Go plugins.
+- Build through the digest-pinned RuleGo Plugin SDK and load the result in the
+  matching digest-pinned runtime on each native architecture runner.
 - Add a generic REST Endpoint example and integration test showing that the
   first stdout chunk is flushed before exit, stderr is excluded from the body,
   terminal data is excluded, and HTTP cancellation reaches `MsgCancel`.
@@ -73,10 +72,12 @@ builds locally.
 ## 5. Add CI and release artifacts
 
 - CI runs formatting, vet, unit/integration tests, and race checks.
-- Native Linux amd64 and arm64 jobs build target-qualified `.so` files and run
-  the compatible-host load smoke test.
-- Release workflow packages the exact CI-produced `.so` files, SHA-256 files,
-  license/compatibility notes, and example without rebuilding them.
+- Native Linux amd64 and arm64 jobs use the SDK to build target-qualified `.so`,
+  `.sha256`, and `.abi.json` files, then run the matching-runtime load smoke
+  test.
+- Release workflow packages those exact CI-produced artifacts, the consumed
+  ABI release record, license/compatibility notes, and example without
+  rebuilding them.
 - Release publication remains a separate authorized external transition.
 
 ## Final gates

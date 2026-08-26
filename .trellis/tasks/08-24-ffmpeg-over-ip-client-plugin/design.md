@@ -175,23 +175,21 @@ so unit tests exercise boundary instants without real multi-minute sleeps.
 
 - Pin ffmpeg-over-ip behavior to `v5.2.1`, protocol `0x06`, commit
   `ab7adfeedf2a50f7e5807beef9088609cce645d6`.
-- Target RuleGo server source revision
-  `3bf4ac47bb49aff9fe048e35644a6bca6e8e2af3`, whose `server/go.mod` pins core
-  module `8995627f6da7bd6d819475373c324cf249af0a13`, and record the exact Go
-  toolchain and build mode in release metadata.
+- Commit the host distributor's reviewed `plugin-abi-release.json` unchanged.
+  Its immutable SDK and runtime digests, ABI ID, and lock digest are the only
+  RuleGo build-compatibility authority consumed by this repository.
 - GitHub CI, on native Linux amd64 and arm64 runners, runs unit/integration/race
   checks and builds target-qualified `.so` files. Local work runs only cheap
   static checks; no heavy local compilation.
-- A plugin-load smoke test source-builds the unmodified target RuleGo server
-  with Go plugin support and the same ABI tuple, loads the `.so`, and verifies
-  component construction. Official `CGO_ENABLED=0` server binaries are not
-  compatible hosts.
+- The SDK produces each `.so`, checksum, and ABI sidecar. The matching runtime
+  loads that exact plugin and exposes both registered extension points.
 - A separate CI integration starts the actual pinned ffmpeg-over-ip v5.2.1
   server and exercises authenticated TCP and Unix-socket sessions with a real
   FFmpeg binary producing deterministic binary output on `pipe:1`. The in-process
   fixture remains for fault injection, not as compatibility authority.
-- A release contains only the two `.so` files, their SHA-256 checksums, license
-  and compatibility notes, and the generic RuleGo example. There is no image.
+- A release contains the two `.so` files and their SDK-generated checksum and
+  ABI sidecars, the consumed ABI release record, license/compatibility notes,
+  and the generic RuleGo example. There is no plugin image.
 
 ## 7. Generic RuleGo example
 

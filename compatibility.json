@@ -1,22 +1,10 @@
 {
-  "pluginVersion": "0.1.1",
-  "go": "1.25.0",
-  "goos": "linux",
-  "goarch": ["amd64", "arm64"],
-  "cgoEnabled": true,
-  "rulegoServer": {
-    "repository": "github.com/rulego/rulego",
-    "revision": "3bf4ac47bb49aff9fe048e35644a6bca6e8e2af3"
-  },
-  "rulegoCore": {
-    "module": "github.com/rulego/rulego",
-    "version": "v0.37.1-0.20260816112453-8995627f6da7",
-    "revision": "8995627f6da7bd6d819475373c324cf249af0a13"
-  },
+  "pluginVersion": "0.2.0",
+  "pluginAbiRelease": "plugin-abi-release.json",
+  "rulegoRelease": "v0.37.0",
   "ffmpegOverIp": {
     "version": "v5.2.1",
     "revision": "ab7adfeedf2a50f7e5807beef9088609cce645d6",
     "protocol": 6
-  },
-  "buildMode": "plugin"
+  }
 }

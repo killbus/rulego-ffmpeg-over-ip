@@ -2,7 +2,7 @@ module github.com/killbus/rulego-ffmpeg-over-ip
 
 go 1.25.0
 
-require github.com/rulego/rulego v0.37.1-0.20260816112453-8995627f6da7
+require github.com/rulego/rulego v0.36.1-0.20260802040353-2ec085f29027
 
 require (
 	filippo.io/edwards25519 v1.1.0 // indirect
