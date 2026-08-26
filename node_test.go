@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -9,6 +10,8 @@ import (
 	"net"
 	"net/http"
 	"net/textproto"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"sync"
@@ -37,6 +40,7 @@ func TestInvocationBoundary(t *testing.T) {
 		`{"program":"ffmpeg"}`,
 		`{"program":"ffmpeg","args":[],"extra":true}`,
 		`{"program":"ffmpeg","args":[],"stdinBase64":"%%%"}`,
+		`{"program":"ffmpeg","args":[],"session":{}}`,
 		`{"program":"ffmpeg","args":[]} {}`,
 	} {
 		if _, _, err := decodeInvocation(invalid); err == nil {
@@ -47,7 +51,7 @@ func TestInvocationBoundary(t *testing.T) {
 
 func TestPluginAndConfiguration(t *testing.T) {
 	components := Plugins.Components()
-	if len(components) != 1 || components[0].Type() != componentType {
+	if len(components) != 2 || components[0].Type() != componentType || components[1].Type() != producerComponentType {
 		t.Fatalf("components = %#v", components)
 	}
 	definition := components[0].(*ffmpegOverIPNode).Def()
@@ -66,6 +70,31 @@ func TestPluginAndConfiguration(t *testing.T) {
 	}
 	if err := node.Init(types.Config{}, types.Configuration{"address": "localhost:5050", "authSecret": "secret", "sessionTimeoutMs": int64(1<<63 - 1)}); err == nil {
 		t.Fatal("overflowing timeout accepted")
+	}
+	producer := (&ffmpegOverIPProducerNode{}).New().(*ffmpegOverIPProducerNode)
+	if err := producer.Init(types.Config{}, types.Configuration{"address": "unix:tmp/ffmpeg.sock", "authSecret": "secret"}); err != nil {
+		t.Fatal(err)
+	}
+	if producer.Config.DialTimeoutMs != 5000 {
+		t.Fatalf("producer default dial timeout = %d", producer.Config.DialTimeoutMs)
+	}
+}
+
+func TestProducerBoundary(t *testing.T) {
+	valid := `{"key":"asset","invocation":{"program":"ffmpeg","args":[]},"awaitFile":"segment.ts","awaitOnly":true,"runTimeoutMs":1,"cacheTtlMs":1}`
+	request, _, err := decodeProducerRequest(valid)
+	if err != nil || request.AwaitFile != "segment.ts" || !request.AwaitOnly {
+		t.Fatalf("valid producer request: request=%#v err=%v", request, err)
+	}
+	for _, invalid := range []string{
+		`{"key":"","invocation":{"program":"ffmpeg","args":[]},"awaitFile":"segment.ts","runTimeoutMs":1,"cacheTtlMs":1}`,
+		`{"key":"asset","invocation":{"program":"ffmpeg","args":[]},"awaitFile":"","runTimeoutMs":1,"cacheTtlMs":1}`,
+		`{"key":"asset","invocation":{"program":"ffmpeg","args":[]},"awaitFile":"segment.ts","runTimeoutMs":0,"cacheTtlMs":1}`,
+		`{"key":"asset","invocation":{"program":"ffmpeg","args":[]},"awaitFile":"segment.ts","runTimeoutMs":1,"cacheTtlMs":0}`,
+	} {
+		if _, _, err := decodeProducerRequest(invalid); err == nil {
+			t.Fatalf("accepted invalid producer request %s", invalid)
+		}
 	}
 }
 
@@ -186,6 +215,179 @@ func TestRuleGoStreamsBothChannelsBeforeOneTerminalResult(t *testing.T) {
 	}
 	if !terminalMetadataOK {
 		t.Fatal("terminal output did not preserve caller metadata or retained stream channel metadata")
+	}
+}
+
+func TestProducerSharesJobAndExpiresFiles(t *testing.T) {
+	if err := os.MkdirAll("tmp", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	directory, err := os.MkdirTemp("tmp", "session-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(directory) })
+	outputPath := filepath.Join(directory, "segment.ts")
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	started := make(chan struct{})
+	writeFile := make(chan struct{})
+	release := make(chan struct{})
+	serverErr := make(chan error, 1)
+	go func() {
+		conn, err := listener.Accept()
+		if err != nil {
+			serverErr <- err
+			return
+		}
+		defer conn.Close()
+		if _, err := readFixtureFrame(conn); err != nil {
+			serverErr <- err
+			return
+		}
+		if message, err := readFixtureFrame(conn); err != nil || message.typ != 0x11 {
+			serverErr <- errors.New("stdin EOF not received")
+			return
+		}
+		close(started)
+		<-writeFile
+		if err := writeFixtureFile(conn, outputPath, []byte("segment")); err != nil {
+			serverErr <- err
+			return
+		}
+		<-release
+		serverErr <- writeFixtureFrame(conn, 0x03, make([]byte, 4))
+	}()
+
+	if err := rulego.Registry.Register(&ffmpegOverIPProducerNode{}); err != nil {
+		t.Fatal(err)
+	}
+	defer rulego.Registry.Unregister(producerComponentType)
+	dsl := fmt.Sprintf(`{
+		"ruleChain":{"id":"ffoip-producer","root":true},
+		"metadata":{"firstNodeIndex":0,"nodes":[
+			{"id":"client","type":"ffmpegOverIpProducer","configuration":{"address":%q,"authSecret":"secret"}},
+			{"id":"end","type":"end","configuration":{}}
+		],"connections":[
+			{"fromId":"client","toId":"end","type":"Stream"},
+			{"fromId":"client","toId":"end","type":"Success"},
+			{"fromId":"client","toId":"end","type":"Failure"}
+		]}
+	}`, listener.Addr().String())
+	pool := rulego.NewRuleGo()
+	engine, err := pool.New("ffoip-producer", []byte(dsl), rulego.WithConfig(rulego.NewConfig()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer engine.Stop(nil)
+
+	request := fmt.Sprintf(`{"key":"video:profile","invocation":{"program":"ffmpeg","args":["-window","0"]},"awaitFile":%q,"runTimeoutMs":1000,"cacheTtlMs":50}`, outputPath)
+	awaitOnlyRequest := fmt.Sprintf(`{"key":"video:profile","invocation":{"program":"ffmpeg","args":["-window","0"]},"awaitFile":%q,"awaitOnly":true,"runTimeoutMs":1000,"cacheTtlMs":50}`, outputPath)
+	run := func(request string, result chan<- string) {
+		var body strings.Builder
+		engine.OnMsgAndWait(types.NewMsgWithJsonData(request), types.WithOnEnd(func(_ types.RuleContext, output types.RuleMsg, callbackErr error, relation string) {
+			if callbackErr == nil && relation == types.Stream && output.Metadata.GetValue(channelKey) == "stdout" {
+				body.Write(output.GetBytes())
+			}
+		}))
+		result <- body.String()
+	}
+	results := make(chan string, 2)
+	go run(request, results)
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("session did not start")
+	}
+	go run(awaitOnlyRequest, results)
+	close(writeFile)
+	seen := map[string]int{}
+	for range 2 {
+		select {
+		case got := <-results:
+			seen[got]++
+		case <-time.After(time.Second):
+			t.Fatal("session waiter did not finish")
+		}
+	}
+	if seen["segment"] != 1 || seen[""] != 1 {
+		t.Fatalf("producer outputs = %#v", seen)
+	}
+
+	if tcp, ok := listener.(*net.TCPListener); ok {
+		_ = tcp.SetDeadline(time.Now().Add(50 * time.Millisecond))
+		if duplicate, acceptErr := tcp.Accept(); acceptErr == nil {
+			_ = duplicate.Close()
+			t.Fatal("duplicate session opened a second connection")
+		}
+	}
+	close(release)
+	if err := <-serverErr; err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(time.Second)
+	for {
+		if _, err := os.Stat(outputPath); errors.Is(err, os.ErrNotExist) {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("session cache file did not expire")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func TestProducerReplacesDifferentJob(t *testing.T) {
+	canceled := make(chan struct{})
+	node := &ffmpegOverIPProducerNode{
+		Config: producerConfiguration{Address: "127.0.0.1:1", AuthSecret: "secret", DialTimeoutMs: 1},
+		jobs: map[string]*producerJob{
+			"video:profile": {
+				fingerprint: sha256.Sum256([]byte("old")),
+				cancel:      func() { close(canceled) },
+			},
+		},
+	}
+	request := producerRequest{
+		Key:          "video:profile",
+		Invocation:   invocationRequest{Program: "ffmpeg", Args: []string{"-window", "next"}},
+		AwaitFile:    "unused",
+		RunTimeoutMs: 100,
+		CacheTTLms:   1,
+	}
+	if _, ok := node.ensureJob(request, nil, invocationFingerprint(request.Invocation)); !ok {
+		t.Fatal("replacement job was rejected")
+	}
+	select {
+	case <-canceled:
+	case <-time.After(time.Second):
+		t.Fatal("previous window was not canceled")
+	}
+	node.Destroy()
+}
+
+func TestProducerCancelsWhenLastWaiterDisconnects(t *testing.T) {
+	canceled := make(chan struct{})
+	node := &ffmpegOverIPProducerNode{}
+	job := &producerJob{
+		cancel: func() { close(canceled) },
+		done:   make(chan struct{}),
+		notify: make(chan struct{}),
+		ready:  make(map[string]struct{}),
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := node.waitForFile(ctx, job, "segment.ts"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("wait error = %v", err)
+	}
+	select {
+	case <-canceled:
+	case <-time.After(time.Second):
+		t.Fatal("producer was not canceled after its last waiter disconnected")
 	}
 }
 
@@ -441,6 +643,35 @@ func writeFixtureFrame(writer io.Writer, typ byte, payload []byte) error {
 	}
 	_, err := writer.Write(payload)
 	return err
+}
+
+func writeFixtureFile(conn net.Conn, path string, content []byte) error {
+	open := make([]byte, 10+len(path))
+	binary.BigEndian.PutUint16(open, 1)
+	binary.BigEndian.PutUint16(open[2:], 7)
+	binary.BigEndian.PutUint32(open[4:], 0x241)
+	binary.BigEndian.PutUint16(open[8:], 0o600)
+	copy(open[10:], path)
+	if err := writeFixtureFrame(conn, 0x20, open); err != nil {
+		return err
+	}
+	if response, err := readFixtureFrame(conn); err != nil || response.typ != 0x40 {
+		return errors.New("file open failed")
+	}
+	write := append([]byte{0, 2, 0, 7}, content...)
+	if err := writeFixtureFrame(conn, 0x22, write); err != nil {
+		return err
+	}
+	if response, err := readFixtureFrame(conn); err != nil || response.typ != 0x42 {
+		return errors.New("file write failed")
+	}
+	if err := writeFixtureFrame(conn, 0x24, []byte{0, 3, 0, 7}); err != nil {
+		return err
+	}
+	if response, err := readFixtureFrame(conn); err != nil || response.typ != 0x44 {
+		return errors.New("file close failed")
+	}
+	return nil
 }
 
 type testMessage struct {

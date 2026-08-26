@@ -29,9 +29,10 @@ type Config struct {
 }
 
 type Invocation struct {
-	Program string
-	Args    []string
-	Stdin   io.Reader
+	Program     string
+	Args        []string
+	Stdin       io.Reader
+	OnFileReady func(string)
 }
 
 type OutputFunc func(channel string, data []byte)
@@ -128,7 +129,7 @@ func runConn(ctx context.Context, conn net.Conn, secret string, invocation Invoc
 		return 0, safeError("transport", "remote command send failed")
 	}
 
-	files := newFileHandler()
+	files := newFileHandler(invocation.OnFileReady)
 	var lastRecv atomic.Int64
 	lastRecv.Store(time.Now().UnixNano())
 	asyncErr := make(chan error, 1)

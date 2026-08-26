@@ -1,8 +1,9 @@
 # rulego-ffmpeg-over-ip
 
-A native RuleGo plugin for one authenticated ffmpeg-over-ip v5.2.1
-protocol-v6 invocation per RuleGo message. It exposes the `ffmpegOverIp` node
-and the `ffmpegOverIpResponse` REST output processor.
+A native RuleGo plugin for authenticated ffmpeg-over-ip v5.2.1 protocol-v6
+invocations. It exposes the `ffmpegOverIp` node for one invocation per message,
+the `ffmpegOverIpProducer` node for bounded file-producing jobs, and the
+`ffmpegOverIpResponse` REST output processor.
 
 ## Node configuration
 
@@ -16,7 +17,9 @@ and the `ffmpegOverIpResponse` REST output processor.
 ```
 
 `address` accepts TCP `host:port` and `unix:/path/to/socket`. A zero session
-timeout leaves the deadline to the RuleGo request context.
+timeout leaves the deadline to the RuleGo request context. The producer node
+uses the same connection fields but does not expose `sessionTimeoutMs`; each
+producer request carries its finite runtime instead.
 
 ## Invocation
 
@@ -36,9 +39,38 @@ The session also implements the protocol's client-side file operations using
 the RuleGo process's existing filesystem permissions. Configure that process
 with only the filesystem access remote invocations should have.
 
-Both stdout and stderr are emitted synchronously on RuleGo's `Stream` relation
-in wire order. Metadata `ffmpegOverIp.channel` is `stdout` or `stderr`.
-The terminal message uses `Success` for exit 0 and `Failure` otherwise, with
+Use the separate `ffmpegOverIpProducer` node when a finite file-producing job
+must outlive one HTTP request:
+
+```json
+{
+  "key": "asset:output-profile",
+  "invocation": {
+    "program": "ffmpeg",
+    "args": ["-t", "30", "-f", "hls", "/app/data/hls/window/index.m3u8"]
+  },
+  "awaitFile": "/app/data/hls/window/0.ts",
+  "awaitOnly": false,
+  "runTimeoutMs": 60000,
+  "cacheTtlMs": 120000
+}
+```
+
+The producer node keeps at most one job for a key. Identical invocations share
+it; a different invocation cancels and replaces it. The request returns the
+complete `awaitFile` on the `Stream` relation as soon as ffmpeg closes or
+atomically renames that file, while the bounded job continues. Files created
+by the job are deleted after the TTL if they have not since been replaced. The
+last disconnected waiter cancels a job that has not produced its requested
+file. The rule chain owns window size and must bound ffmpeg with `-t`.
+Set `awaitOnly` to `true` when a downstream node only needs the completed file;
+the producer then emits `Success` without reading or emitting the file on
+`Stream`.
+
+The `ffmpegOverIp` node remains stateless across messages. Its stdout and
+stderr are emitted synchronously on RuleGo's `Stream` relation in wire order.
+Metadata `ffmpegOverIp.channel` is `stdout` or `stderr`. The terminal message
+uses `Success` for exit 0 and `Failure` otherwise, with
 `ffmpegOverIp.exitCode` when an exit status is known.
 
 The REST processor writes and flushes only stdout. The generic example is in

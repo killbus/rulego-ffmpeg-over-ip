@@ -63,7 +63,7 @@ func (n *ffmpegOverIPNode) Def() types.ComponentForm {
 		Category:      "external",
 		Label:         "ffmpeg-over-ip",
 		Desc:          "Run one authenticated remote ffmpeg or ffprobe invocation",
-		Version:       "0.2.0",
+		Version:       "0.3.1",
 		ComponentKind: types.ComponentKindNative,
 		RelationTypes: &relations,
 	}
@@ -98,10 +98,9 @@ func (n *ffmpegOverIPNode) Init(_ types.Config, configuration types.Configuratio
 func (n *ffmpegOverIPNode) OnMsg(ruleContext types.RuleContext, msg types.RuleMsg) {
 	request, stdin, err := decodeInvocation(msg.GetData())
 	if err != nil {
-		n.tellFailure(ruleContext, msg, "", nil, "invalid_input", "invalid invocation", err)
+		tellFailure(ruleContext, msg, "", nil, "invalid_input", "invalid invocation", err)
 		return
 	}
-
 	parent := ruleContext.GetContext()
 	if parent == nil {
 		parent = context.Background()
@@ -120,7 +119,7 @@ func (n *ffmpegOverIPNode) OnMsg(ruleContext types.RuleContext, msg types.RuleMs
 	id, ok := n.addSession(cancel)
 	if !ok {
 		cancel()
-		n.tellFailure(ruleContext, msg, request.Program, nil, "canceled", "node is shutting down", errors.New("node is shutting down"))
+		tellFailure(ruleContext, msg, request.Program, nil, "canceled", "node is shutting down", errors.New("node is shutting down"))
 		return
 	}
 	defer func() {
@@ -145,15 +144,15 @@ func (n *ffmpegOverIPNode) OnMsg(ruleContext types.RuleContext, msg types.RuleMs
 	})
 
 	if runErr == nil {
-		n.tellSuccess(ruleContext, msg, request.Program, exitCode)
+		tellSuccess(ruleContext, msg, request.Program, exitCode)
 		return
 	}
 	var sessionErr *client.Error
 	if errors.As(runErr, &sessionErr) {
-		n.tellFailure(ruleContext, msg, request.Program, sessionErr.ExitCode, sessionErr.Kind, sessionErr.Message, runErr)
+		tellFailure(ruleContext, msg, request.Program, sessionErr.ExitCode, sessionErr.Kind, sessionErr.Message, runErr)
 		return
 	}
-	n.tellFailure(ruleContext, msg, request.Program, nil, "internal", "remote session failed", errors.New("remote session failed"))
+	tellFailure(ruleContext, msg, request.Program, nil, "internal", "remote session failed", errors.New("remote session failed"))
 }
 
 func (n *ffmpegOverIPNode) Destroy() {
@@ -212,22 +211,27 @@ func decodeInvocation(data string) (invocationRequest, io.Reader, error) {
 	if err := ensureJSONEOF(decoder); err != nil {
 		return request, nil, err
 	}
+	stdin, err := decodeStdin(request)
+	return request, stdin, err
+}
+
+func decodeStdin(request invocationRequest) (io.Reader, error) {
 	if request.Args == nil {
-		return request, nil, errors.New("args is required")
+		return nil, errors.New("args is required")
 	}
 	if err := client.ValidateInvocation(request.Program, request.Args); err != nil {
-		return request, nil, err
+		return nil, err
 	}
 	if request.StdinBase64 == "" {
-		return request, nil, nil
+		return nil, nil
 	}
 	encoding := base64.StdEncoding.Strict()
 	check := base64.NewDecoder(encoding, strings.NewReader(request.StdinBase64))
 	buffer := make([]byte, 32*1024)
 	if _, err := io.CopyBuffer(io.Discard, check, buffer); err != nil {
-		return request, nil, errors.New("stdinBase64 is invalid")
+		return nil, errors.New("stdinBase64 is invalid")
 	}
-	return request, base64.NewDecoder(encoding, strings.NewReader(request.StdinBase64)), nil
+	return base64.NewDecoder(encoding, strings.NewReader(request.StdinBase64)), nil
 }
 
 func ensureJSONEOF(decoder *json.Decoder) error {
@@ -241,7 +245,7 @@ func ensureJSONEOF(decoder *json.Decoder) error {
 	return nil
 }
 
-func (n *ffmpegOverIPNode) tellSuccess(ctx types.RuleContext, input types.RuleMsg, program string, exitCode int) {
+func tellSuccess(ctx types.RuleContext, input types.RuleMsg, program string, exitCode int) {
 	payload, _ := json.Marshal(terminalResult{Program: program, ExitCode: &exitCode})
 	output := input.Copy()
 	output.DataType = types.JSON
@@ -251,7 +255,17 @@ func (n *ffmpegOverIPNode) tellSuccess(ctx types.RuleContext, input types.RuleMs
 	ctx.TellSuccess(output)
 }
 
-func (n *ffmpegOverIPNode) tellFailure(ctx types.RuleContext, input types.RuleMsg, program string, exitCode *int, kind, message string, err error) {
+func tellReady(ctx types.RuleContext, input types.RuleMsg, program string) {
+	payload, _ := json.Marshal(terminalResult{Program: program, Kind: "ready"})
+	output := input.Copy()
+	output.DataType = types.JSON
+	output.SetBytes(payload)
+	output.Metadata.Delete(channelKey)
+	output.Metadata.Delete(exitCodeKey)
+	ctx.TellSuccess(output)
+}
+
+func tellFailure(ctx types.RuleContext, input types.RuleMsg, program string, exitCode *int, kind, message string, err error) {
 	if program != "ffmpeg" && program != "ffprobe" {
 		program = ""
 	}

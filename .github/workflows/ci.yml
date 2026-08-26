@@ -176,6 +176,7 @@ jobs:
           done
           test -s plugin/tmp/components.json || { docker logs "$container"; exit 1; }
           jq -e '.nodes | any(.type == "ffmpegOverIp")' plugin/tmp/components.json
+          jq -e '.nodes | any(.type == "ffmpegOverIpProducer")' plugin/tmp/components.json
           jq -e '.builtins.endpoints.outProcessors | index("ffmpegOverIpResponse") != null' plugin/tmp/components.json
       - uses: actions/upload-artifact@v4
         with:
