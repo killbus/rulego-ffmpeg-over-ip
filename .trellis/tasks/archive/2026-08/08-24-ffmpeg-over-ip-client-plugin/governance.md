@@ -2,7 +2,7 @@
 
 Canonical contract: `/home/agent/Src/stream-prism/.trellis/spec/guides/delivery-governance.md`
 
-## Active Delivery
+## Final Delivery Record (v0.2.0)
 
 - Goal ID: `ffmpeg-over-ip-client-plugin-v1`
 - Observable outcome: publish the same complete ffmpeg-over-ip RuleGo client
@@ -12,14 +12,33 @@ Canonical contract: `/home/agent/Src/stream-prism/.trellis/spec/guides/delivery-
 - Authoritative build input: TEAM B workflow run `32948070511`, revision
   `a498c9e29b0121e5495557ecc88c4a5df9150637`, and its reviewed
   `plugin-abi-release.json` artifact.
-- Scope: dependency alignment, release metadata, SDK build, matching-runtime
-  load verification, and publication of a new immutable plugin release.
+- Delivered product identity: commit
+  `318858fe8184db79645715e7246c1299c0ff7f6b`, annotated tag `v0.2.0` (peeled
+  to that commit), and release REST ID `377052355`.
+- Scope delivered: dependency alignment, release metadata, SDK build,
+  matching-runtime load verification, and a new immutable plugin release.
 - Non-goals: plugin behavior changes, another ABI schema, another build helper,
   a plugin container image, or rewriting `v0.1.1`.
-- Current phase: `EXECUTE`; the prior delivery record below remains immutable
-  historical evidence and is not evidence that the active delivery is done.
+- TEAM B authority: workflow run `32948070511`, packaging revision
+  `a498c9e29b0121e5495557ecc88c4a5df9150637`, ABI record SHA-256
+  `4054332fd2c9ba70630d556d69c95c0c0bda1958c8f6ded9230980b9d1d6f36b`.
+- CI evidence: run `32957784185` completed successfully at the exact product
+  commit. Its metadata, test/race, pinned-upstream, amd64 SDK/runtime, and arm64
+  SDK/runtime jobs all succeeded.
+- Release evidence: workflow `32958685299` verified the CI run and exact tag
+  commit, downloaded its artifacts, checked SHA-256 files, and published
+  without rebuilding.
+- Delivered state: public non-draft, non-prerelease release at
+  <https://github.com/killbus/rulego-ffmpeg-over-ip/releases/tag/v0.2.0>.
+- Asset evidence: all 13 expected assets were downloaded under ignored
+  `./tmp/release-v0.2.0-validation/`; both checksums passed, both ABI sidecars
+  match the release record and plugin bytes, and `file` identified Linux x86-64
+  and ARM aarch64 shared objects.
+- Completion audit: fresh read-only auditor `sdk_completion_audit` (goal thread
+  `01a03daa-f93e-7203-a896-700f248d39f2`) independently evaluated every row
+  below and returned `CONTINUE` to `COMPLETE`.
 
-## Active Gate Evidence
+## Gate and Retry Evidence
 
 - TEAM B release evidence: workflow run `32948070511` succeeded at
   `a498c9e29b0121e5495557ecc88c4a5df9150637`; the downloaded release record is
@@ -31,13 +50,55 @@ Canonical contract: `/home/agent/Src/stream-prism/.trellis/spec/guides/delivery-
 - Pre-commit path gate: independent read-only reviewer returned `CONTINUE` for
   candidate cursor `866db09d…e67f8ae`; the capability is unchanged, the ABI
   authority is singular, and no helper or local build path was added.
+- Pre-tag path gate: the same reviewer returned `CONTINUE` for commit
+  `318858fe8184db79645715e7246c1299c0ff7f6b` and CI run `32957784185`, after
+  confirming `v0.2.0` was absent and `v0.1.1` remained unchanged.
 - Retry evidence: implementer, quality checker, and path reviewer each resumed
   the same `ffmpeg-over-ip-client-plugin-v1` goal after provider disconnects or
   rate limits; no retry changed scope, authority, or candidate intent.
-- Next transition: commit the candidate, push `master`, then use the resulting
-  GitHub Actions run as the build and runtime-load authority.
+- Final transition: `DELIVER -> COMPLETE`; preconditions, delivered identity,
+  and the full requirement matrix were proven.
 
-## Final Delivery Record
+## v0.2.0 Completion Matrix
+
+- Goal ID: `ffmpeg-over-ip-client-plugin-v1`
+- Delivery identity: `318858fe8184db79645715e7246c1299c0ff7f6b` /
+  `v0.2.0` / release `377052355`.
+- Auditor identity: fresh read-only `sdk_completion_audit`, goal thread
+  `01a03daa-f93e-7203-a896-700f248d39f2`.
+
+| ID | Current authoritative evidence | Status before audit |
+| --- | --- | --- |
+| R1 | Both native SDK artifacts loaded in the matching runtime; component API exposed `ffmpegOverIp` | PROVEN |
+| R2 | Exact-argv and invocation-boundary tests passed in CI test job `98143204392` | PROVEN |
+| R3 | Pinned ffmpeg-over-ip v5.2.1 integration job `98143204534` passed | PROVEN |
+| R4 | Complete client session suite and race suite passed in CI | PROVEN |
+| R5 | Stream ordering/channel tests passed in CI | PROVEN |
+| R6 | Terminal outcome tests passed in CI | PROVEN |
+| R7 | Cancellation/lifecycle tests passed in CI | PROVEN |
+| R8 | Configuration tests passed; product configuration code is unchanged from v0.1.1 | PROVEN |
+| R9 | Concurrency/resource tests and race suite passed in CI | PROVEN |
+| R10 | Capability source is unchanged from v0.1.1 except its version literal; no media policy was added | PROVEN |
+| R11 | Release exposes both native `.so`, SDK checksum/ABI sidecars, ABI record, compatibility/license files, and example | PROVEN |
+| R12 | Runtime API exposed `ffmpegOverIpResponse`; REST projection tests passed | PROVEN |
+| R13 | Pinned-upstream TCP and Unix integration passed | PROVEN |
+| AC1 | Native amd64 job `98143204520` and arm64 job `98143204524` built via SDK, validated sidecars, and loaded via matching runtime | PROVEN |
+| AC2 | Exact argv tests passed in CI | PROVEN |
+| AC3 | Actual pinned-server auth/binary/error coverage passed in CI | PROVEN |
+| AC4 | Progressive ordered stream tests passed in CI | PROVEN |
+| AC5 | stdin/EOF test passed in CI | PROVEN |
+| AC6 | Terminal and clock-driven liveness tests passed in CI | PROVEN |
+| AC7 | Cancel/grace/race tests passed in CI | PROVEN |
+| AC8 | Concurrent-session and bounded-allocation tests passed, including race mode | PROVEN |
+| AC9 | Generic REST example is present in the release and its projection tests passed | PROVEN |
+| AC10 | Release contains both architectures and all `.so`, `.sha256`, `.abi.json` artifacts; no plugin image was published | PROVEN |
+| AC11 | Public node-contract tests passed in CI | PROVEN |
+| AC12 | REST disconnect cancellation test passed in CI | PROVEN |
+
+- Missing or contradicted claims: none.
+- Final verdict: `CONTINUE` from `DELIVER` to `COMPLETE`.
+
+## Prior Delivery Record (v0.1.1)
 
 - Goal ID: `ffmpeg-over-ip-client-plugin-v1`
 - Observable outcome: the released RuleGo plugin provides one complete
