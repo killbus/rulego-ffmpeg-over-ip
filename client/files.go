@@ -28,11 +28,21 @@ const (
 )
 
 type fileHandler struct {
-	files   map[uint16]*os.File
-	readBuf []byte
+	files       map[uint16]*os.File
+	written     map[uint16]string
+	ready       map[string]struct{}
+	onFileReady func(string)
+	readBuf     []byte
 }
 
-func newFileHandler() *fileHandler { return &fileHandler{files: make(map[uint16]*os.File)} }
+func newFileHandler(onFileReady func(string)) *fileHandler {
+	return &fileHandler{
+		files:       make(map[uint16]*os.File),
+		written:     make(map[uint16]string),
+		ready:       make(map[string]struct{}),
+		onFileReady: onFileReady,
+	}
+}
 
 func (h *fileHandler) closeAll() {
 	for id, file := range h.files {
@@ -76,13 +86,15 @@ func (h *fileHandler) open(p []byte, write func(uint8, []byte) error) error {
 	if _, exists := h.files[id]; exists {
 		return writeIOError(write, req, fioEINVAL)
 	}
-	flags := wireFlags(binary.BigEndian.Uint32(p[4:]))
+	wireFlag := binary.BigEndian.Uint32(p[4:])
+	flags := wireFlags(wireFlag)
+	path := string(p[10:])
 	if binary.BigEndian.Uint32(p[4:])&0x40 != 0 {
-		if err := os.MkdirAll(filepath.Dir(string(p[10:])), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			return writeIOError(write, req, mapErrno(err))
 		}
 	}
-	file, err := os.OpenFile(string(p[10:]), flags, os.FileMode(binary.BigEndian.Uint16(p[8:])))
+	file, err := os.OpenFile(path, flags, os.FileMode(binary.BigEndian.Uint16(p[8:])))
 	if err != nil {
 		return writeIOError(write, req, mapErrno(err))
 	}
@@ -92,6 +104,9 @@ func (h *fileHandler) open(p []byte, write func(uint8, []byte) error) error {
 		return writeIOError(write, req, mapErrno(err))
 	}
 	h.files[id] = file
+	if wireFlag&3 != 0 || wireFlag&0x40 != 0 || wireFlag&0x200 != 0 {
+		h.written[id] = path
+	}
 	response := make([]byte, 10)
 	binary.BigEndian.PutUint16(response, req)
 	binary.BigEndian.PutUint64(response[2:], uint64(info.Size()))
@@ -185,8 +200,13 @@ func (h *fileHandler) close(p []byte, write func(uint8, []byte) error) error {
 	}
 	err := file.Close()
 	delete(h.files, id)
+	path, written := h.written[id]
+	delete(h.written, id)
 	if err != nil {
 		return writeIOError(write, req, mapErrno(err))
+	}
+	if written {
+		h.markReady(path)
 	}
 	return writeRequestOK(write, msgCloseOK, req)
 }
@@ -245,10 +265,22 @@ func (h *fileHandler) rename(p []byte, write func(uint8, []byte) error) error {
 	if len(p) < 4+oldLen {
 		return fmt.Errorf("malformed rename request")
 	}
-	if err := os.Rename(string(p[4:4+oldLen]), string(p[4+oldLen:])); err != nil {
+	oldPath, newPath := string(p[4:4+oldLen]), string(p[4+oldLen:])
+	if err := os.Rename(oldPath, newPath); err != nil {
 		return writeIOError(write, req, mapErrno(err))
 	}
+	if _, ok := h.ready[oldPath]; ok {
+		delete(h.ready, oldPath)
+		h.markReady(newPath)
+	}
 	return writeRequestOK(write, msgRenameOK, req)
+}
+
+func (h *fileHandler) markReady(path string) {
+	h.ready[path] = struct{}{}
+	if h.onFileReady != nil {
+		h.onFileReady(path)
+	}
 }
 
 func (h *fileHandler) mkdir(p []byte, write func(uint8, []byte) error) error {

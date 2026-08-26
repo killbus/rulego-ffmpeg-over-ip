@@ -341,7 +341,8 @@ func TestLivenessReceiveTimeoutClosesSession(t *testing.T) {
 }
 
 func TestFileOperationsAndReadCap(t *testing.T) {
-	handler := newFileHandler()
+	var ready []string
+	handler := newFileHandler(func(path string) { ready = append(ready, path) })
 	defer handler.closeAll()
 	directory := t.TempDir()
 	path := filepath.Join(directory, "source")
@@ -394,6 +395,9 @@ func TestFileOperationsAndReadCap(t *testing.T) {
 	if err := handler.handle(msgClose, []byte{0, 7, 0, 7}, send); err != nil || response.typ != msgCloseOK {
 		t.Fatalf("close: type=%x err=%v", response.typ, err)
 	}
+	if !reflect.DeepEqual(ready, []string{path}) {
+		t.Fatalf("ready after close = %#v", ready)
+	}
 
 	rename := make([]byte, 4+len(path)+len(renamed))
 	binary.BigEndian.PutUint16(rename, 8)
@@ -402,6 +406,9 @@ func TestFileOperationsAndReadCap(t *testing.T) {
 	copy(rename[4+len(path):], renamed)
 	if err := handler.handle(msgRename, rename, send); err != nil || response.typ != msgRenameOK {
 		t.Fatalf("rename: type=%x err=%v", response.typ, err)
+	}
+	if !reflect.DeepEqual(ready, []string{path, renamed}) {
+		t.Fatalf("ready after rename = %#v", ready)
 	}
 	if info, err := os.Stat(renamed); err != nil || info.Size() != 2 {
 		t.Fatalf("renamed file: info=%v err=%v", info, err)

@@ -17,7 +17,9 @@ type pluginRegistry struct{}
 
 func (*pluginRegistry) Init() error { return nil }
 
-func (*pluginRegistry) Components() []types.Node { return []types.Node{&ffmpegOverIPNode{}} }
+func (*pluginRegistry) Components() []types.Node {
+	return []types.Node{&ffmpegOverIPNode{}, &ffmpegOverIPProducerNode{}}
+}
 
 func init() {
 	// RuleGo's pinned plugin loader does not call PluginRegistry.Init, so the
