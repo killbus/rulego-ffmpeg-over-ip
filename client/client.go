@@ -29,10 +29,11 @@ type Config struct {
 }
 
 type Invocation struct {
-	Program     string
-	Args        []string
-	Stdin       io.Reader
-	OnFileReady func(string)
+	Program        string
+	Args           []string
+	Stdin          io.Reader
+	MaxOutputBytes int64
+	OnFileReady    func(string)
 }
 
 type OutputFunc func(channel string, data []byte)
@@ -53,6 +54,9 @@ func safeError(kind, message string) *Error { return &Error{Kind: kind, Message:
 func Run(ctx context.Context, config Config, invocation Invocation, output OutputFunc) (int, error) {
 	if err := ValidateInvocation(invocation.Program, invocation.Args); err != nil {
 		return 0, safeError("invalid_input", err.Error())
+	}
+	if invocation.MaxOutputBytes < 0 {
+		return 0, safeError("invalid_input", "output byte limit must not be negative")
 	}
 	network, address, err := parseAddress(config.Address)
 	if err != nil || config.AuthSecret == "" {
@@ -116,6 +120,10 @@ func runConn(ctx context.Context, conn net.Conn, secret string, invocation Invoc
 		_ = conn.Close()
 		return 0, safeError("invalid_input", err.Error())
 	}
+	if invocation.MaxOutputBytes < 0 {
+		_ = conn.Close()
+		return 0, safeError("invalid_input", "output byte limit must not be negative")
+	}
 
 	var nonce [nonceLen]byte
 	if _, err := rand.Read(nonce[:]); err != nil {
@@ -129,7 +137,7 @@ func runConn(ctx context.Context, conn net.Conn, secret string, invocation Invoc
 		return 0, safeError("transport", "remote command send failed")
 	}
 
-	files := newFileHandler(invocation.OnFileReady)
+	files := newFileHandler(invocation.OnFileReady, invocation.MaxOutputBytes)
 	var lastRecv atomic.Int64
 	lastRecv.Store(time.Now().UnixNano())
 	asyncErr := make(chan error, 1)
@@ -222,6 +230,10 @@ func runConn(ctx context.Context, conn net.Conn, secret string, invocation Invoc
 		case msgPong:
 		case msgOpen, msgRead, msgWrite, msgSeek, msgClose, msgFstat, msgFtruncate, msgUnlink, msgRename, msgMkdir:
 			if err := files.handle(message.typ, message.payload, w.write); err != nil {
+				if errors.Is(err, errOutputLimitExceeded) {
+					cancelOnce.Do(func() { _ = w.cancel() })
+					return 0, safeError("output_limit", "remote output byte limit exceeded")
+				}
 				return 0, safeError("protocol", "invalid file operation frame")
 			}
 		default:

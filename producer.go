@@ -26,12 +26,14 @@ type producerConfiguration struct {
 }
 
 type producerRequest struct {
-	Key          string            `json:"key"`
-	Invocation   invocationRequest `json:"invocation"`
-	AwaitFile    string            `json:"awaitFile"`
-	AwaitOnly    bool              `json:"awaitOnly"`
-	RunTimeoutMs int64             `json:"runTimeoutMs"`
-	CacheTTLms   int64             `json:"cacheTtlMs"`
+	Key             string            `json:"key"`
+	Invocation      invocationRequest `json:"invocation"`
+	AwaitFile       string            `json:"awaitFile"`
+	AwaitOnly       bool              `json:"awaitOnly"`
+	AwaitCompletion bool              `json:"awaitCompletion"`
+	MaxBytes        int64             `json:"maxBytes"`
+	RunTimeoutMs    int64             `json:"runTimeoutMs"`
+	CacheTTLms      int64             `json:"cacheTtlMs"`
 }
 
 type ffmpegOverIPProducerNode struct {
@@ -70,7 +72,7 @@ func (*ffmpegOverIPProducerNode) Def() types.ComponentForm {
 		Category:      "external",
 		Label:         "ffmpeg-over-ip producer",
 		Desc:          "Share and bound a remote invocation that produces files",
-		Version:       "0.3.2",
+		Version:       "0.4.0",
 		ComponentKind: types.ComponentKindNative,
 		RelationTypes: &relations,
 	}
@@ -107,19 +109,8 @@ func (n *ffmpegOverIPProducerNode) OnMsg(ruleContext types.RuleContext, msg type
 		tellFailure(ruleContext, msg, "", nil, "invalid_input", "invalid producer request", err)
 		return
 	}
-	fingerprint := invocationFingerprint(request.Invocation)
+	fingerprint := producerFingerprint(request)
 	job, same := n.currentJob(request.Key, fingerprint)
-	if job != nil && !same && n.jobFileReady(job, request.AwaitFile) {
-		if !request.AwaitOnly {
-			if err := streamReadyFile(ruleContext, msg, request.AwaitFile); err != nil {
-				tellFailure(ruleContext, msg, request.Invocation.Program, nil, "file", "ready file could not be streamed", err)
-				return
-			}
-		}
-		_, _ = n.ensureJob(request, stdin, fingerprint)
-		tellReady(ruleContext, msg, request.Invocation.Program)
-		return
-	}
 	if job == nil || !same {
 		var ok bool
 		job, ok = n.ensureJob(request, stdin, fingerprint)
@@ -128,7 +119,7 @@ func (n *ffmpegOverIPProducerNode) OnMsg(ruleContext types.RuleContext, msg type
 			return
 		}
 	}
-	if err := n.waitForFile(ruleContext.GetContext(), job, request.AwaitFile); err != nil {
+	if err := n.waitForFile(ruleContext.GetContext(), job, request.AwaitFile, request.AwaitCompletion); err != nil {
 		tellJobFailure(ruleContext, msg, request.Invocation.Program, err)
 		return
 	}
@@ -184,6 +175,9 @@ func decodeProducerRequest(data string) (producerRequest, io.Reader, error) {
 		return request, nil, errors.New("awaitFile is invalid")
 	}
 	request.AwaitFile = filepath.Clean(request.AwaitFile)
+	if request.MaxBytes <= 0 {
+		return request, nil, errors.New("maxBytes must be positive")
+	}
 	if request.RunTimeoutMs <= 0 || request.CacheTTLms <= 0 ||
 		request.RunTimeoutMs > maxTimeoutMs || request.CacheTTLms > maxTimeoutMs {
 		return request, nil, errors.New("producer timeouts are out of range")
@@ -192,8 +186,13 @@ func decodeProducerRequest(data string) (producerRequest, io.Reader, error) {
 	return request, stdin, err
 }
 
-func invocationFingerprint(request invocationRequest) [sha256.Size]byte {
-	payload, _ := json.Marshal(request)
+func producerFingerprint(request producerRequest) [sha256.Size]byte {
+	payload, _ := json.Marshal(struct {
+		Invocation   invocationRequest `json:"invocation"`
+		MaxBytes     int64             `json:"maxBytes"`
+		RunTimeoutMs int64             `json:"runTimeoutMs"`
+		CacheTTLms   int64             `json:"cacheTtlMs"`
+	}{request.Invocation, request.MaxBytes, request.RunTimeoutMs, request.CacheTTLms})
 	return sha256.Sum256(payload)
 }
 
@@ -230,20 +229,21 @@ func (n *ffmpegOverIPProducerNode) ensureJob(request producerRequest, stdin io.R
 	n.wg.Add(1)
 	n.mu.Unlock()
 
-	go n.runJob(ctx, request.Invocation, stdin, job)
+	go n.runJob(ctx, request, stdin, job)
 	return job, true
 }
 
-func (n *ffmpegOverIPProducerNode) runJob(ctx context.Context, request invocationRequest, stdin io.Reader, job *producerJob) {
+func (n *ffmpegOverIPProducerNode) runJob(ctx context.Context, request producerRequest, stdin io.Reader, job *producerJob) {
 	defer n.wg.Done()
 	_, runErr := client.Run(ctx, client.Config{
 		Address:     n.Config.Address,
 		AuthSecret:  n.Config.AuthSecret,
 		DialTimeout: time.Duration(n.Config.DialTimeoutMs) * time.Millisecond,
 	}, client.Invocation{
-		Program: request.Program,
-		Args:    request.Args,
-		Stdin:   stdin,
+		Program:        request.Invocation.Program,
+		Args:           request.Invocation.Args,
+		Stdin:          stdin,
+		MaxOutputBytes: request.MaxBytes,
 		OnFileReady: func(path string) {
 			n.markFileReady(ctx, job, filepath.Clean(path))
 		},
@@ -311,7 +311,7 @@ func (n *ffmpegOverIPProducerNode) jobFileState(job *producerJob, path string) (
 	return ready, job.notify
 }
 
-func (n *ffmpegOverIPProducerNode) waitForFile(ctx context.Context, job *producerJob, path string) error {
+func (n *ffmpegOverIPProducerNode) waitForFile(ctx context.Context, job *producerJob, path string, awaitCompletion bool) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -330,17 +330,17 @@ func (n *ffmpegOverIPProducerNode) waitForFile(ctx context.Context, job *produce
 	}()
 	for {
 		ready, notify := n.jobFileState(job, path)
-		if ready {
+		if ready && !awaitCompletion {
 			return nil
 		}
 		select {
 		case <-notify:
 		case <-job.done:
-			if n.jobFileReady(job, path) {
-				return nil
-			}
 			if job.err != nil {
 				return job.err
+			}
+			if n.jobFileReady(job, path) {
+				return nil
 			}
 			return errors.New("remote process exited before the requested file was ready")
 		case <-ctx.Done():

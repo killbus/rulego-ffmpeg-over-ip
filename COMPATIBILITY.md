@@ -1,6 +1,6 @@
 # Compatibility
 
-The v0.3.2 release consumes the immutable RuleGo Plugin ABI contract in
+The v0.4.0 release consumes the immutable RuleGo Plugin ABI contract in
 [`plugin-abi-release.json`](plugin-abi-release.json). That record is the single
 authority for the exact SDK and runtime image digests, ABI ID, lock digest, and
 packaging revision; it is shipped unchanged with the plugin release.

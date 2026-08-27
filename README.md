@@ -51,6 +51,8 @@ must outlive one HTTP request:
   },
   "awaitFile": "/app/data/hls/window/0.ts",
   "awaitOnly": false,
+  "awaitCompletion": true,
+  "maxBytes": 67108864,
   "runTimeoutMs": 60000,
   "cacheTtlMs": 120000
 }
@@ -63,6 +65,11 @@ atomically renames that file, while the bounded job continues. Files created
 by the job are deleted after the TTL if they have not since been replaced. The
 last disconnected waiter cancels a job that has not produced its requested
 file. The rule chain owns window size and must bound ffmpeg with `-t`.
+`maxBytes` is a required hard aggregate limit for bytes accepted through the
+remote file protocol; exceeding it rejects the write and cancels the remote
+invocation. Set `awaitCompletion` when the result will be published: success
+then requires both the requested closed file and a successful terminal process
+result, so a later producer failure cannot publish an incomplete resource set.
 Set `awaitOnly` to `true` when a downstream node only needs the completed file;
 the producer then emits `Success` without reading or emitting the file on
 `Stream`.

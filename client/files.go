@@ -13,6 +13,8 @@ import (
 	"syscall"
 )
 
+var errOutputLimitExceeded = errors.New("output byte limit exceeded")
+
 const (
 	fioEPERM   = int32(1)
 	fioENOENT  = int32(2)
@@ -28,19 +30,22 @@ const (
 )
 
 type fileHandler struct {
-	files       map[uint16]*os.File
-	written     map[uint16]string
-	ready       map[string]struct{}
-	onFileReady func(string)
-	readBuf     []byte
+	files        map[uint16]*os.File
+	written      map[uint16]string
+	ready        map[string]struct{}
+	onFileReady  func(string)
+	maxBytes     int64
+	writtenBytes int64
+	readBuf      []byte
 }
 
-func newFileHandler(onFileReady func(string)) *fileHandler {
+func newFileHandler(onFileReady func(string), maxBytes int64) *fileHandler {
 	return &fileHandler{
 		files:       make(map[uint16]*os.File),
 		written:     make(map[uint16]string),
 		ready:       make(map[string]struct{}),
 		onFileReady: onFileReady,
+		maxBytes:    maxBytes,
 	}
 }
 
@@ -148,7 +153,12 @@ func (h *fileHandler) write(p []byte, send func(uint8, []byte) error) error {
 	if !ok {
 		return writeIOError(send, req, fioEINVAL)
 	}
+	if h.maxBytes > 0 && int64(len(p)-4) > h.maxBytes-h.writtenBytes {
+		_ = writeIOError(send, req, fioENOSPC)
+		return errOutputLimitExceeded
+	}
 	n, err := file.Write(p[4:])
+	h.writtenBytes += int64(n)
 	if err != nil {
 		return writeIOError(send, req, mapErrno(err))
 	}
@@ -240,9 +250,23 @@ func (h *fileHandler) truncate(p []byte, write func(uint8, []byte) error) error 
 	if !ok {
 		return writeIOError(write, req, fioEINVAL)
 	}
-	if err := file.Truncate(int64(binary.BigEndian.Uint64(p[4:]))); err != nil {
+	size := int64(binary.BigEndian.Uint64(p[4:]))
+	info, err := file.Stat()
+	if err != nil {
 		return writeIOError(write, req, mapErrno(err))
 	}
+	growth := size - info.Size()
+	if growth < 0 {
+		growth = 0
+	}
+	if h.maxBytes > 0 && growth > h.maxBytes-h.writtenBytes {
+		_ = writeIOError(write, req, fioENOSPC)
+		return errOutputLimitExceeded
+	}
+	if err := file.Truncate(size); err != nil {
+		return writeIOError(write, req, mapErrno(err))
+	}
+	h.writtenBytes += growth
 	return writeRequestOK(write, msgFtruncateOK, req)
 }
 

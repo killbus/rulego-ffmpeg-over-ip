@@ -342,7 +342,7 @@ func TestLivenessReceiveTimeoutClosesSession(t *testing.T) {
 
 func TestFileOperationsAndReadCap(t *testing.T) {
 	var ready []string
-	handler := newFileHandler(func(path string) { ready = append(ready, path) })
+	handler := newFileHandler(func(path string) { ready = append(ready, path) }, 0)
 	defer handler.closeAll()
 	directory := t.TempDir()
 	path := filepath.Join(directory, "source")
@@ -435,6 +435,145 @@ func TestFileOperationsAndReadCap(t *testing.T) {
 	}
 	if cap(handler.readBuf) != 0 {
 		t.Fatalf("oversized read allocated %d bytes", cap(handler.readBuf))
+	}
+}
+
+func TestFileOutputLimitCountsExactAggregateAcrossFiles(t *testing.T) {
+	if err := os.MkdirAll("tmp", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	directory, err := os.MkdirTemp("tmp", "output-limit-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(directory) })
+
+	handler := newFileHandler(nil, 5)
+	defer handler.closeAll()
+	var response frame
+	send := func(typ uint8, payload []byte) error {
+		response = frame{typ: typ, payload: append([]byte(nil), payload...)}
+		return nil
+	}
+	open := func(requestID, fileID uint16, path string) {
+		t.Helper()
+		payload := make([]byte, 10+len(path))
+		binary.BigEndian.PutUint16(payload, requestID)
+		binary.BigEndian.PutUint16(payload[2:], fileID)
+		binary.BigEndian.PutUint32(payload[4:], 0x241)
+		binary.BigEndian.PutUint16(payload[8:], 0o600)
+		copy(payload[10:], path)
+		if err := handler.handle(msgOpen, payload, send); err != nil || response.typ != msgOpenOK {
+			t.Fatalf("open: type=%x err=%v", response.typ, err)
+		}
+	}
+	write := func(requestID, fileID uint16, data string) error {
+		t.Helper()
+		payload := make([]byte, 4+len(data))
+		binary.BigEndian.PutUint16(payload, requestID)
+		binary.BigEndian.PutUint16(payload[2:], fileID)
+		copy(payload[4:], data)
+		return handler.handle(msgWrite, payload, send)
+	}
+
+	first := filepath.Join(directory, "first")
+	second := filepath.Join(directory, "second")
+	open(1, 7, first)
+	open(2, 8, second)
+	if err := write(3, 7, "abc"); err != nil || response.typ != msgWriteOK {
+		t.Fatalf("first write: type=%x err=%v", response.typ, err)
+	}
+	if err := write(4, 8, "de"); err != nil || response.typ != msgWriteOK || handler.writtenBytes != 5 {
+		t.Fatalf("exact aggregate limit: type=%x bytes=%d err=%v", response.typ, handler.writtenBytes, err)
+	}
+	if err := write(5, 7, "x"); !errors.Is(err, errOutputLimitExceeded) || response.typ != msgIOError || binary.BigEndian.Uint32(response.payload[2:]) != uint32(fioENOSPC) {
+		t.Fatalf("over-limit write: type=%x payload=%x err=%v", response.typ, response.payload, err)
+	}
+	truncate := make([]byte, 12)
+	binary.BigEndian.PutUint16(truncate, 6)
+	binary.BigEndian.PutUint16(truncate[2:], 8)
+	binary.BigEndian.PutUint64(truncate[4:], 3)
+	if err := handler.handle(msgFtruncate, truncate, send); !errors.Is(err, errOutputLimitExceeded) || response.typ != msgIOError {
+		t.Fatalf("over-limit truncate: type=%x payload=%x err=%v", response.typ, response.payload, err)
+	}
+	if handler.writtenBytes != 5 {
+		t.Fatalf("accepted bytes = %d", handler.writtenBytes)
+	}
+	for path, want := range map[string]int64{first: 3, second: 2} {
+		if info, err := os.Stat(path); err != nil || info.Size() != want {
+			t.Fatalf("%s: size=%v err=%v", path, info, err)
+		}
+	}
+}
+
+func TestOutputLimitCancelsRemoteInvocation(t *testing.T) {
+	if err := os.MkdirAll("tmp", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	directory, err := os.MkdirTemp("tmp", "output-cancel-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(directory) })
+	path := filepath.Join(directory, "output")
+
+	clientConn, serverConn := net.Pipe()
+	serverErr := make(chan error, 1)
+	go func() {
+		defer serverConn.Close()
+		if command, err := readFrame(serverConn); err != nil || command.typ != msgCommand {
+			serverErr <- errors.New("missing command")
+			return
+		}
+		if eof, err := readFrame(serverConn); err != nil || eof.typ != msgStdinClose {
+			serverErr <- errors.New("missing stdin close")
+			return
+		}
+		open := make([]byte, 10+len(path))
+		binary.BigEndian.PutUint16(open, 1)
+		binary.BigEndian.PutUint16(open[2:], 7)
+		binary.BigEndian.PutUint32(open[4:], 0x241)
+		binary.BigEndian.PutUint16(open[8:], 0o600)
+		copy(open[10:], path)
+		if err := writeFrame(serverConn, msgOpen, open); err != nil {
+			serverErr <- err
+			return
+		}
+		if response, err := readFrame(serverConn); err != nil || response.typ != msgOpenOK {
+			serverErr <- errors.New("file open failed")
+			return
+		}
+		write := append([]byte{0, 2, 0, 7}, []byte("123456")...)
+		if err := writeFrame(serverConn, msgWrite, write); err != nil {
+			serverErr <- err
+			return
+		}
+		response, err := readFrame(serverConn)
+		if err != nil || response.typ != msgIOError || binary.BigEndian.Uint32(response.payload[2:]) != uint32(fioENOSPC) {
+			serverErr <- errors.New("output limit was not rejected")
+			return
+		}
+		if cancel, err := readFrame(serverConn); err != nil || cancel.typ != msgCancel {
+			serverErr <- errors.New("remote invocation was not canceled")
+			return
+		}
+		serverErr <- nil
+	}()
+
+	_, err = runConn(context.Background(), clientConn, "secret", Invocation{
+		Program:        "ffmpeg",
+		Args:           []string{},
+		MaxOutputBytes: 5,
+	}, nil)
+	var sessionErr *Error
+	if !errors.As(err, &sessionErr) || sessionErr.Kind != "output_limit" {
+		t.Fatalf("run error = %#v", err)
+	}
+	if err := <-serverErr; err != nil {
+		t.Fatal(err)
+	}
+	if info, err := os.Stat(path); err != nil || info.Size() != 0 {
+		t.Fatalf("over-limit bytes were accepted: info=%v err=%v", info, err)
 	}
 }
 

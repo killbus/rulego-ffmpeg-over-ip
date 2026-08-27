@@ -81,16 +81,22 @@ func TestPluginAndConfiguration(t *testing.T) {
 }
 
 func TestProducerBoundary(t *testing.T) {
-	valid := `{"key":"asset","invocation":{"program":"ffmpeg","args":[]},"awaitFile":"segment.ts","awaitOnly":true,"runTimeoutMs":1,"cacheTtlMs":1}`
+	valid := `{"key":"asset","invocation":{"program":"ffmpeg","args":[]},"awaitFile":"segment.ts","awaitOnly":true,"awaitCompletion":true,"maxBytes":1,"runTimeoutMs":1,"cacheTtlMs":1}`
 	request, _, err := decodeProducerRequest(valid)
-	if err != nil || request.AwaitFile != "segment.ts" || !request.AwaitOnly {
+	if err != nil || request.AwaitFile != "segment.ts" || !request.AwaitOnly || !request.AwaitCompletion || request.MaxBytes != 1 {
 		t.Fatalf("valid producer request: request=%#v err=%v", request, err)
 	}
+	other := request
+	other.MaxBytes++
+	if producerFingerprint(request) == producerFingerprint(other) {
+		t.Fatal("different producer bounds shared one fingerprint")
+	}
 	for _, invalid := range []string{
-		`{"key":"","invocation":{"program":"ffmpeg","args":[]},"awaitFile":"segment.ts","runTimeoutMs":1,"cacheTtlMs":1}`,
-		`{"key":"asset","invocation":{"program":"ffmpeg","args":[]},"awaitFile":"","runTimeoutMs":1,"cacheTtlMs":1}`,
-		`{"key":"asset","invocation":{"program":"ffmpeg","args":[]},"awaitFile":"segment.ts","runTimeoutMs":0,"cacheTtlMs":1}`,
-		`{"key":"asset","invocation":{"program":"ffmpeg","args":[]},"awaitFile":"segment.ts","runTimeoutMs":1,"cacheTtlMs":0}`,
+		`{"key":"","invocation":{"program":"ffmpeg","args":[]},"awaitFile":"segment.ts","maxBytes":1,"runTimeoutMs":1,"cacheTtlMs":1}`,
+		`{"key":"asset","invocation":{"program":"ffmpeg","args":[]},"awaitFile":"","maxBytes":1,"runTimeoutMs":1,"cacheTtlMs":1}`,
+		`{"key":"asset","invocation":{"program":"ffmpeg","args":[]},"awaitFile":"segment.ts","maxBytes":0,"runTimeoutMs":1,"cacheTtlMs":1}`,
+		`{"key":"asset","invocation":{"program":"ffmpeg","args":[]},"awaitFile":"segment.ts","maxBytes":1,"runTimeoutMs":0,"cacheTtlMs":1}`,
+		`{"key":"asset","invocation":{"program":"ffmpeg","args":[]},"awaitFile":"segment.ts","maxBytes":1,"runTimeoutMs":1,"cacheTtlMs":0}`,
 	} {
 		if _, _, err := decodeProducerRequest(invalid); err == nil {
 			t.Fatalf("accepted invalid producer request %s", invalid)
@@ -115,6 +121,70 @@ func TestProducerDoesNotPublishFileClosedAfterCancellation(t *testing.T) {
 	}
 	if _, ok := job.files["segment.ts"]; !ok {
 		t.Fatal("canceled output was not retained for cleanup")
+	}
+}
+
+func TestProducerAwaitCompletionWaitsForTerminalSuccess(t *testing.T) {
+	node := &ffmpegOverIPProducerNode{}
+	job := &producerJob{
+		cancel: func() {},
+		done:   make(chan struct{}),
+		notify: make(chan struct{}),
+		ready:  make(map[string]struct{}),
+		files:  make(map[string]struct{}),
+	}
+	result := make(chan error, 1)
+	go func() {
+		result <- node.waitForFile(context.Background(), job, "segment.ts", true)
+	}()
+	node.markFileReady(context.Background(), job, "segment.ts")
+	select {
+	case err := <-result:
+		t.Fatalf("returned before terminal result: %v", err)
+	case <-time.After(20 * time.Millisecond):
+	}
+	close(job.done)
+	select {
+	case err := <-result:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("terminal success did not release waiter")
+	}
+}
+
+func TestProducerAwaitCompletionRejectsFailedOrCanceledWork(t *testing.T) {
+	node := &ffmpegOverIPProducerNode{}
+	failed := errors.New("producer failed")
+	failedJob := &producerJob{
+		cancel: func() {},
+		done:   make(chan struct{}),
+		notify: make(chan struct{}),
+		ready:  map[string]struct{}{"segment.ts": {}},
+		err:    failed,
+	}
+	close(failedJob.done)
+	if err := node.waitForFile(context.Background(), failedJob, "segment.ts", true); !errors.Is(err, failed) {
+		t.Fatalf("failed job was published: %v", err)
+	}
+
+	canceled := make(chan struct{})
+	canceledJob := &producerJob{
+		cancel: func() { close(canceled) },
+		done:   make(chan struct{}),
+		notify: make(chan struct{}),
+		ready:  map[string]struct{}{"segment.ts": {}},
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := node.waitForFile(ctx, canceledJob, "segment.ts", true); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled job was published: %v", err)
+	}
+	select {
+	case <-canceled:
+	case <-time.After(time.Second):
+		t.Fatal("canceled completion waiter did not cancel the job")
 	}
 }
 
@@ -305,8 +375,8 @@ func TestProducerSharesJobAndExpiresFiles(t *testing.T) {
 	}
 	defer engine.Stop(nil)
 
-	request := fmt.Sprintf(`{"key":"video:profile","invocation":{"program":"ffmpeg","args":["-window","0"]},"awaitFile":%q,"runTimeoutMs":1000,"cacheTtlMs":50}`, outputPath)
-	awaitOnlyRequest := fmt.Sprintf(`{"key":"video:profile","invocation":{"program":"ffmpeg","args":["-window","0"]},"awaitFile":%q,"awaitOnly":true,"runTimeoutMs":1000,"cacheTtlMs":50}`, outputPath)
+	request := fmt.Sprintf(`{"key":"video:profile","invocation":{"program":"ffmpeg","args":["-window","0"]},"awaitFile":%q,"maxBytes":1024,"runTimeoutMs":1000,"cacheTtlMs":50}`, outputPath)
+	awaitOnlyRequest := fmt.Sprintf(`{"key":"video:profile","invocation":{"program":"ffmpeg","args":["-window","0"]},"awaitFile":%q,"awaitOnly":true,"maxBytes":1024,"runTimeoutMs":1000,"cacheTtlMs":50}`, outputPath)
 	run := func(request string, result chan<- string) {
 		var body strings.Builder
 		engine.OnMsgAndWait(types.NewMsgWithJsonData(request), types.WithOnEnd(func(_ types.RuleContext, output types.RuleMsg, callbackErr error, relation string) {
@@ -376,10 +446,11 @@ func TestProducerReplacesDifferentJob(t *testing.T) {
 		Key:          "video:profile",
 		Invocation:   invocationRequest{Program: "ffmpeg", Args: []string{"-window", "next"}},
 		AwaitFile:    "unused",
+		MaxBytes:     1024,
 		RunTimeoutMs: 100,
 		CacheTTLms:   1,
 	}
-	if _, ok := node.ensureJob(request, nil, invocationFingerprint(request.Invocation)); !ok {
+	if _, ok := node.ensureJob(request, nil, producerFingerprint(request)); !ok {
 		t.Fatal("replacement job was rejected")
 	}
 	select {
@@ -401,7 +472,7 @@ func TestProducerCancelsWhenLastWaiterDisconnects(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if err := node.waitForFile(ctx, job, "segment.ts"); !errors.Is(err, context.Canceled) {
+	if err := node.waitForFile(ctx, job, "segment.ts", false); !errors.Is(err, context.Canceled) {
 		t.Fatalf("wait error = %v", err)
 	}
 	select {
