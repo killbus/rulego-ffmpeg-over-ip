@@ -63,7 +63,7 @@ func (n *ffmpegOverIPNode) Def() types.ComponentForm {
 		Category:      "external",
 		Label:         "ffmpeg-over-ip",
 		Desc:          "Run one authenticated remote ffmpeg or ffprobe invocation",
-		Version:       "0.4.0",
+		Version:       "0.4.1",
 		ComponentKind: types.ComponentKindNative,
 		RelationTypes: &relations,
 	}

@@ -72,7 +72,7 @@ func (*ffmpegOverIPProducerNode) Def() types.ComponentForm {
 		Category:      "external",
 		Label:         "ffmpeg-over-ip producer",
 		Desc:          "Share and bound a remote invocation that produces files",
-		Version:       "0.4.0",
+		Version:       "0.4.1",
 		ComponentKind: types.ComponentKindNative,
 		RelationTypes: &relations,
 	}

@@ -448,24 +448,23 @@ func TestFileOutputLimitCountsExactAggregateAcrossFiles(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(directory) })
 
-	handler := newFileHandler(nil, 5)
+	var ready []string
+	handler := newFileHandler(func(path string) { ready = append(ready, path) }, 5)
 	defer handler.closeAll()
 	var response frame
 	send := func(typ uint8, payload []byte) error {
 		response = frame{typ: typ, payload: append([]byte(nil), payload...)}
 		return nil
 	}
-	open := func(requestID, fileID uint16, path string) {
+	open := func(requestID, fileID uint16, flags uint32, path string) error {
 		t.Helper()
 		payload := make([]byte, 10+len(path))
 		binary.BigEndian.PutUint16(payload, requestID)
 		binary.BigEndian.PutUint16(payload[2:], fileID)
-		binary.BigEndian.PutUint32(payload[4:], 0x241)
+		binary.BigEndian.PutUint32(payload[4:], flags)
 		binary.BigEndian.PutUint16(payload[8:], 0o600)
 		copy(payload[10:], path)
-		if err := handler.handle(msgOpen, payload, send); err != nil || response.typ != msgOpenOK {
-			t.Fatalf("open: type=%x err=%v", response.typ, err)
-		}
+		return handler.handle(msgOpen, payload, send)
 	}
 	write := func(requestID, fileID uint16, data string) error {
 		t.Helper()
@@ -476,22 +475,82 @@ func TestFileOutputLimitCountsExactAggregateAcrossFiles(t *testing.T) {
 		return handler.handle(msgWrite, payload, send)
 	}
 
+	oversized := filepath.Join(directory, "oversized")
+	if err := os.WriteFile(oversized, []byte("123456"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := open(1, 6, 1, oversized); !errors.Is(err, errOutputLimitExceeded) || response.typ != msgIOError || binary.BigEndian.Uint32(response.payload[2:]) != uint32(fioENOSPC) {
+		t.Fatalf("oversized existing open: type=%x payload=%x err=%v", response.typ, response.payload, err)
+	}
+	if len(ready) != 0 || handler.writtenBytes != 0 || handler.files[6] != nil {
+		t.Fatalf("rejected existing file became output: ready=%#v bytes=%d open=%v", ready, handler.writtenBytes, handler.files[6] != nil)
+	}
+
 	first := filepath.Join(directory, "first")
 	second := filepath.Join(directory, "second")
-	open(1, 7, first)
-	open(2, 8, second)
-	if err := write(3, 7, "abc"); err != nil || response.typ != msgWriteOK {
-		t.Fatalf("first write: type=%x err=%v", response.typ, err)
+	sparse := filepath.Join(directory, "sparse")
+	if err := os.WriteFile(first, []byte("abc"), 0o600); err != nil {
+		t.Fatal(err)
 	}
-	if err := write(4, 8, "de"); err != nil || response.typ != msgWriteOK || handler.writtenBytes != 5 {
+	if err := open(2, 7, 1, first); err != nil || response.typ != msgOpenOK || handler.writtenBytes != 3 {
+		t.Fatalf("existing open: type=%x bytes=%d err=%v", response.typ, handler.writtenBytes, err)
+	}
+	if err := open(3, 10, 1, first); err != nil || response.typ != msgOpenOK || handler.writtenBytes != 3 {
+		t.Fatalf("same file reopened: type=%x bytes=%d err=%v", response.typ, handler.writtenBytes, err)
+	}
+	if err := write(4, 7, "z"); err != nil || response.typ != msgWriteOK || handler.writtenBytes != 3 {
+		t.Fatalf("in-place overwrite: type=%x bytes=%d err=%v", response.typ, handler.writtenBytes, err)
+	}
+	if err := open(5, 9, 0x241, sparse); err != nil || response.typ != msgOpenOK {
+		t.Fatalf("sparse open: type=%x err=%v", response.typ, err)
+	}
+	seek := make([]byte, 13)
+	binary.BigEndian.PutUint16(seek, 6)
+	binary.BigEndian.PutUint16(seek[2:], 9)
+	binary.BigEndian.PutUint64(seek[4:], 8)
+	if err := handler.handle(msgSeek, seek, send); err != nil || response.typ != msgSeekOK {
+		t.Fatalf("sparse seek: type=%x err=%v", response.typ, err)
+	}
+	if err := write(7, 9, "x"); !errors.Is(err, errOutputLimitExceeded) || response.typ != msgIOError {
+		t.Fatalf("sparse extension: type=%x payload=%x err=%v", response.typ, response.payload, err)
+	}
+	if info, err := os.Stat(sparse); err != nil || info.Size() != 0 {
+		t.Fatalf("rejected sparse extent: info=%v err=%v", info, err)
+	}
+	if err := open(8, 8, 0x241, second); err != nil || response.typ != msgOpenOK {
+		t.Fatalf("second open: type=%x err=%v", response.typ, err)
+	}
+	if err := write(9, 8, "de"); err != nil || response.typ != msgWriteOK || handler.writtenBytes != 5 {
 		t.Fatalf("exact aggregate limit: type=%x bytes=%d err=%v", response.typ, handler.writtenBytes, err)
 	}
-	if err := write(5, 7, "x"); !errors.Is(err, errOutputLimitExceeded) || response.typ != msgIOError || binary.BigEndian.Uint32(response.payload[2:]) != uint32(fioENOSPC) {
+	if err := handler.handle(msgClose, []byte{0, 10, 0, 8}, send); err != nil || response.typ != msgCloseOK {
+		t.Fatalf("second close: type=%x err=%v", response.typ, err)
+	}
+	renamed := filepath.Join(directory, "renamed")
+	rename := make([]byte, 4+len(second)+len(renamed))
+	binary.BigEndian.PutUint16(rename, 11)
+	binary.BigEndian.PutUint16(rename[2:], uint16(len(second)))
+	copy(rename[4:], second)
+	copy(rename[4+len(second):], renamed)
+	if err := handler.handle(msgRename, rename, send); err != nil || response.typ != msgRenameOK {
+		t.Fatalf("rename: type=%x err=%v", response.typ, err)
+	}
+	if err := open(12, 11, 1, renamed); err != nil || response.typ != msgOpenOK || handler.writtenBytes != 5 {
+		t.Fatalf("renamed reopen: type=%x bytes=%d err=%v", response.typ, handler.writtenBytes, err)
+	}
+	binary.BigEndian.PutUint16(seek, 13)
+	binary.BigEndian.PutUint16(seek[2:], 7)
+	binary.BigEndian.PutUint64(seek[4:], 0)
+	seek[12] = 2
+	if err := handler.handle(msgSeek, seek, send); err != nil || response.typ != msgSeekOK {
+		t.Fatalf("end seek: type=%x err=%v", response.typ, err)
+	}
+	if err := write(14, 7, "x"); !errors.Is(err, errOutputLimitExceeded) || response.typ != msgIOError || binary.BigEndian.Uint32(response.payload[2:]) != uint32(fioENOSPC) {
 		t.Fatalf("over-limit write: type=%x payload=%x err=%v", response.typ, response.payload, err)
 	}
 	truncate := make([]byte, 12)
-	binary.BigEndian.PutUint16(truncate, 6)
-	binary.BigEndian.PutUint16(truncate[2:], 8)
+	binary.BigEndian.PutUint16(truncate, 15)
+	binary.BigEndian.PutUint16(truncate[2:], 11)
 	binary.BigEndian.PutUint64(truncate[4:], 3)
 	if err := handler.handle(msgFtruncate, truncate, send); !errors.Is(err, errOutputLimitExceeded) || response.typ != msgIOError {
 		t.Fatalf("over-limit truncate: type=%x payload=%x err=%v", response.typ, response.payload, err)
@@ -499,7 +558,7 @@ func TestFileOutputLimitCountsExactAggregateAcrossFiles(t *testing.T) {
 	if handler.writtenBytes != 5 {
 		t.Fatalf("accepted bytes = %d", handler.writtenBytes)
 	}
-	for path, want := range map[string]int64{first: 3, second: 2} {
+	for path, want := range map[string]int64{first: 3, renamed: 2} {
 		if info, err := os.Stat(path); err != nil || info.Size() != want {
 			t.Fatalf("%s: size=%v err=%v", path, info, err)
 		}

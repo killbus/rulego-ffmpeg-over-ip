@@ -32,6 +32,8 @@ const (
 type fileHandler struct {
 	files        map[uint16]*os.File
 	written      map[uint16]string
+	extents      []*fileExtent
+	fileExtents  map[uint16]*fileExtent
 	ready        map[string]struct{}
 	onFileReady  func(string)
 	maxBytes     int64
@@ -39,10 +41,16 @@ type fileHandler struct {
 	readBuf      []byte
 }
 
+type fileExtent struct {
+	info fs.FileInfo
+	size int64
+}
+
 func newFileHandler(onFileReady func(string), maxBytes int64) *fileHandler {
 	return &fileHandler{
 		files:       make(map[uint16]*os.File),
 		written:     make(map[uint16]string),
+		fileExtents: make(map[uint16]*fileExtent),
 		ready:       make(map[string]struct{}),
 		onFileReady: onFileReady,
 		maxBytes:    maxBytes,
@@ -108,8 +116,26 @@ func (h *fileHandler) open(p []byte, write func(uint8, []byte) error) error {
 		_ = file.Close()
 		return writeIOError(write, req, mapErrno(err))
 	}
+	output := wireFlag&3 != 0 || wireFlag&0x40 != 0 || wireFlag&0x200 != 0
+	if output && h.maxBytes > 0 {
+		extent := h.findExtent(info)
+		newExtent := extent == nil
+		if extent == nil {
+			extent = &fileExtent{info: info}
+		}
+		if err := h.checkExtent(extent.size, info.Size()); err != nil {
+			_ = file.Close()
+			_ = writeIOError(write, req, fioENOSPC)
+			return err
+		}
+		h.recordExtent(extent, info.Size())
+		if newExtent {
+			h.extents = append(h.extents, extent)
+		}
+		h.fileExtents[id] = extent
+	}
 	h.files[id] = file
-	if wireFlag&3 != 0 || wireFlag&0x40 != 0 || wireFlag&0x200 != 0 {
+	if output {
 		h.written[id] = path
 	}
 	response := make([]byte, 10)
@@ -153,12 +179,28 @@ func (h *fileHandler) write(p []byte, send func(uint8, []byte) error) error {
 	if !ok {
 		return writeIOError(send, req, fioEINVAL)
 	}
-	if h.maxBytes > 0 && int64(len(p)-4) > h.maxBytes-h.writtenBytes {
-		_ = writeIOError(send, req, fioENOSPC)
-		return errOutputLimitExceeded
+	extent := h.fileExtents[id]
+	var offset int64
+	if extent != nil && len(p) > 4 {
+		var err error
+		offset, err = file.Seek(0, io.SeekCurrent)
+		if err != nil {
+			return writeIOError(send, req, mapErrno(err))
+		}
+		end := offset + int64(len(p)-4)
+		if end < offset {
+			_ = writeIOError(send, req, fioENOSPC)
+			return errOutputLimitExceeded
+		}
+		if err := h.checkExtent(extent.size, end); err != nil {
+			_ = writeIOError(send, req, fioENOSPC)
+			return err
+		}
 	}
 	n, err := file.Write(p[4:])
-	h.writtenBytes += int64(n)
+	if extent != nil && n > 0 {
+		h.recordExtent(extent, offset+int64(n))
+	}
 	if err != nil {
 		return writeIOError(send, req, mapErrno(err))
 	}
@@ -210,6 +252,7 @@ func (h *fileHandler) close(p []byte, write func(uint8, []byte) error) error {
 	}
 	err := file.Close()
 	delete(h.files, id)
+	delete(h.fileExtents, id)
 	path, written := h.written[id]
 	delete(h.written, id)
 	if err != nil {
@@ -251,22 +294,19 @@ func (h *fileHandler) truncate(p []byte, write func(uint8, []byte) error) error 
 		return writeIOError(write, req, fioEINVAL)
 	}
 	size := int64(binary.BigEndian.Uint64(p[4:]))
-	info, err := file.Stat()
-	if err != nil {
-		return writeIOError(write, req, mapErrno(err))
-	}
-	growth := size - info.Size()
-	if growth < 0 {
-		growth = 0
-	}
-	if h.maxBytes > 0 && growth > h.maxBytes-h.writtenBytes {
-		_ = writeIOError(write, req, fioENOSPC)
-		return errOutputLimitExceeded
+	extent := h.fileExtents[id]
+	if extent != nil {
+		if err := h.checkExtent(extent.size, size); err != nil {
+			_ = writeIOError(write, req, fioENOSPC)
+			return err
+		}
 	}
 	if err := file.Truncate(size); err != nil {
 		return writeIOError(write, req, mapErrno(err))
 	}
-	h.writtenBytes += growth
+	if extent != nil {
+		h.recordExtent(extent, size)
+	}
 	return writeRequestOK(write, msgFtruncateOK, req)
 }
 
@@ -298,6 +338,31 @@ func (h *fileHandler) rename(p []byte, write func(uint8, []byte) error) error {
 		h.markReady(newPath)
 	}
 	return writeRequestOK(write, msgRenameOK, req)
+}
+
+func (h *fileHandler) checkExtent(extent, size int64) error {
+	growth := size - extent
+	if growth > 0 && growth > h.maxBytes-h.writtenBytes {
+		return errOutputLimitExceeded
+	}
+	return nil
+}
+
+func (h *fileHandler) recordExtent(extent *fileExtent, size int64) {
+	if growth := size - extent.size; growth > 0 {
+		extent.size = size
+		h.writtenBytes += growth
+	}
+}
+
+func (h *fileHandler) findExtent(info fs.FileInfo) *fileExtent {
+	// ponytail: output file counts are small; index identities if this scan becomes measurable.
+	for _, extent := range h.extents {
+		if os.SameFile(extent.info, info) {
+			return extent
+		}
+	}
+	return nil
 }
 
 func (h *fileHandler) markReady(path string) {
