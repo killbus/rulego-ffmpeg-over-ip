@@ -98,6 +98,26 @@ func TestProducerBoundary(t *testing.T) {
 	}
 }
 
+func TestProducerDoesNotPublishFileClosedAfterCancellation(t *testing.T) {
+	node := &ffmpegOverIPProducerNode{}
+	job := &producerJob{
+		notify: make(chan struct{}),
+		ready:  make(map[string]struct{}),
+		files:  make(map[string]struct{}),
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	node.markFileReady(ctx, job, "segment.ts")
+
+	if node.jobFileReady(job, "segment.ts") {
+		t.Fatal("file closed after cancellation was published as ready")
+	}
+	if _, ok := job.files["segment.ts"]; !ok {
+		t.Fatal("canceled output was not retained for cleanup")
+	}
+}
+
 func TestResponseProcessorWritesOnlyStdoutAndFailuresAreBodyless(t *testing.T) {
 	stdout := types.NewMsgFromBytes(0, "", types.BINARY, types.NewMetadata(), []byte{0, 1, 2})
 	stdout.Metadata.PutValue(channelKey, "stdout")

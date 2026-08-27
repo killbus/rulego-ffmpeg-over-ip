@@ -70,7 +70,7 @@ func (*ffmpegOverIPProducerNode) Def() types.ComponentForm {
 		Category:      "external",
 		Label:         "ffmpeg-over-ip producer",
 		Desc:          "Share and bound a remote invocation that produces files",
-		Version:       "0.3.1",
+		Version:       "0.3.2",
 		ComponentKind: types.ComponentKindNative,
 		RelationTypes: &relations,
 	}
@@ -245,13 +245,7 @@ func (n *ffmpegOverIPProducerNode) runJob(ctx context.Context, request invocatio
 		Args:    request.Args,
 		Stdin:   stdin,
 		OnFileReady: func(path string) {
-			path = filepath.Clean(path)
-			n.mu.Lock()
-			job.ready[path] = struct{}{}
-			job.files[path] = struct{}{}
-			close(job.notify)
-			job.notify = make(chan struct{})
-			n.mu.Unlock()
+			n.markFileReady(ctx, job, filepath.Clean(path))
 		},
 	}, nil)
 
@@ -274,6 +268,18 @@ func (n *ffmpegOverIPProducerNode) runJob(ctx context.Context, request invocatio
 	n.mu.Unlock()
 	job.cancel()
 	time.AfterFunc(job.ttl, func() { n.expireJob(job, files) })
+}
+
+func (n *ffmpegOverIPProducerNode) markFileReady(ctx context.Context, job *producerJob, path string) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	job.files[path] = struct{}{}
+	if ctx.Err() != nil {
+		return
+	}
+	job.ready[path] = struct{}{}
+	close(job.notify)
+	job.notify = make(chan struct{})
 }
 
 func (n *ffmpegOverIPProducerNode) expireJob(job *producerJob, files []cachedFile) {
