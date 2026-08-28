@@ -27,13 +27,20 @@ producer request carries its finite runtime instead.
 {
   "program": "ffmpeg",
   "args": ["-i", "input name", "-f", "matroska", "pipe:1"],
-  "stdinBase64": ""
+  "stdinBase64": "",
+  "collectStdoutMaxBytes": 0
 }
 ```
 
 Only `ffmpeg` and `ffprobe` are accepted. Arguments remain an exact ordered
 vector and never pass through a shell. Optional stdin is decoded and sent in
 bounded chunks, followed by protocol EOF.
+
+`collectStdoutMaxBytes` defaults to `0`, which preserves incremental `Stream`
+messages. Set it to a positive hard limit when a downstream node needs one
+complete binary stdout value: stdout is then emitted once on `Success` after a
+successful process exit, stderr is not emitted, and exceeding the limit fails
+the invocation. The maximum collection limit is 64 MiB.
 
 The session also implements the protocol's client-side file operations using
 the RuleGo process's existing filesystem permissions. Configure that process
@@ -77,8 +84,9 @@ Set `awaitOnly` to `true` when a downstream node only needs the completed file;
 the producer then emits `Success` without reading or emitting the file on
 `Stream`.
 
-The `ffmpegOverIp` node remains stateless across messages. Its stdout and
-stderr are emitted synchronously on RuleGo's `Stream` relation in wire order.
+The `ffmpegOverIp` node remains stateless across messages. In its default mode,
+stdout and stderr are emitted synchronously on RuleGo's `Stream` relation in
+wire order.
 Metadata `ffmpegOverIp.channel` is `stdout` or `stderr`. The terminal message
 uses `Success` for exit 0 and `Failure` otherwise, with
 `ffmpegOverIp.exitCode` when an exit status is known.

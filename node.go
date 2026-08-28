@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -18,10 +19,11 @@ import (
 )
 
 const (
-	componentType = "ffmpegOverIp"
-	channelKey    = "ffmpegOverIp.channel"
-	exitCodeKey   = "ffmpegOverIp.exitCode"
-	maxTimeoutMs  = int64(1<<63-1) / int64(time.Millisecond)
+	componentType           = "ffmpegOverIp"
+	channelKey              = "ffmpegOverIp.channel"
+	exitCodeKey             = "ffmpegOverIp.exitCode"
+	maxTimeoutMs            = int64(1<<63-1) / int64(time.Millisecond)
+	maxCollectedStdoutBytes = int64(64 << 20)
 )
 
 type NodeConfiguration struct {
@@ -32,9 +34,10 @@ type NodeConfiguration struct {
 }
 
 type invocationRequest struct {
-	Program     string   `json:"program"`
-	Args        []string `json:"args"`
-	StdinBase64 string   `json:"stdinBase64,omitempty"`
+	Program               string   `json:"program"`
+	Args                  []string `json:"args"`
+	StdinBase64           string   `json:"stdinBase64,omitempty"`
+	CollectStdoutMaxBytes int64    `json:"collectStdoutMaxBytes,omitempty"`
 }
 
 type terminalResult struct {
@@ -63,7 +66,7 @@ func (n *ffmpegOverIPNode) Def() types.ComponentForm {
 		Category:      "external",
 		Label:         "ffmpeg-over-ip",
 		Desc:          "Run one authenticated remote ffmpeg or ffprobe invocation",
-		Version:       "0.4.1",
+		Version:       "0.5.0",
 		ComponentKind: types.ComponentKindNative,
 		RelationTypes: &relations,
 	}
@@ -127,6 +130,8 @@ func (n *ffmpegOverIPNode) OnMsg(ruleContext types.RuleContext, msg types.RuleMs
 		n.removeSession(id)
 	}()
 
+	var stdout bytes.Buffer
+	stdoutLimitExceeded := false
 	exitCode, runErr := client.Run(sessionContext, client.Config{
 		Address:     n.Config.Address,
 		AuthSecret:  n.Config.AuthSecret,
@@ -136,6 +141,18 @@ func (n *ffmpegOverIPNode) OnMsg(ruleContext types.RuleContext, msg types.RuleMs
 		Args:    request.Args,
 		Stdin:   stdin,
 	}, func(channel string, data []byte) {
+		if request.CollectStdoutMaxBytes > 0 {
+			if channel != "stdout" || stdoutLimitExceeded {
+				return
+			}
+			if int64(len(data)) > request.CollectStdoutMaxBytes-int64(stdout.Len()) {
+				stdoutLimitExceeded = true
+				cancel()
+				return
+			}
+			_, _ = stdout.Write(data)
+			return
+		}
 		stream := msg.Copy()
 		stream.DataType = types.BINARY
 		stream.SetBytes(data)
@@ -143,7 +160,15 @@ func (n *ffmpegOverIPNode) OnMsg(ruleContext types.RuleContext, msg types.RuleMs
 		ruleContext.TellNext(stream, types.Stream)
 	})
 
+	if stdoutLimitExceeded {
+		tellFailure(ruleContext, msg, request.Program, nil, "output_limit", "collected stdout exceeded limit", errors.New("collected stdout exceeded limit"))
+		return
+	}
 	if runErr == nil {
+		if request.CollectStdoutMaxBytes > 0 {
+			tellCollectedSuccess(ruleContext, msg, request.Program, exitCode, stdout.Bytes())
+			return
+		}
 		tellSuccess(ruleContext, msg, request.Program, exitCode)
 		return
 	}
@@ -211,6 +236,9 @@ func decodeInvocation(data string) (invocationRequest, io.Reader, error) {
 	if err := ensureJSONEOF(decoder); err != nil {
 		return request, nil, err
 	}
+	if request.CollectStdoutMaxBytes < 0 || request.CollectStdoutMaxBytes > maxCollectedStdoutBytes {
+		return request, nil, errors.New("collectStdoutMaxBytes is out of range")
+	}
 	stdin, err := decodeStdin(request)
 	return request, stdin, err
 }
@@ -251,6 +279,15 @@ func tellSuccess(ctx types.RuleContext, input types.RuleMsg, program string, exi
 	output.DataType = types.JSON
 	output.SetBytes(payload)
 	output.Metadata.Delete(channelKey)
+	output.Metadata.PutValue(exitCodeKey, strconv.Itoa(exitCode))
+	ctx.TellSuccess(output)
+}
+
+func tellCollectedSuccess(ctx types.RuleContext, input types.RuleMsg, program string, exitCode int, stdout []byte) {
+	output := input.Copy()
+	output.DataType = types.BINARY
+	output.SetBytes(stdout)
+	output.Metadata.PutValue(channelKey, "stdout")
 	output.Metadata.PutValue(exitCodeKey, strconv.Itoa(exitCode))
 	ctx.TellSuccess(output)
 }

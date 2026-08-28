@@ -24,12 +24,15 @@ import (
 )
 
 func TestInvocationBoundary(t *testing.T) {
-	request, stdin, err := decodeInvocation(`{"program":"ffmpeg","args":["-i","a b!?","pipe:1"],"stdinBase64":"AAEC/w=="}`)
+	request, stdin, err := decodeInvocation(`{"program":"ffmpeg","args":["-i","a b!?","pipe:1"],"stdinBase64":"AAEC/w==","collectStdoutMaxBytes":16384}`)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if want := []string{"-i", "a b!?", "pipe:1"}; !reflect.DeepEqual(request.Args, want) {
 		t.Fatalf("args = %#v", request.Args)
+	}
+	if request.CollectStdoutMaxBytes != 16384 {
+		t.Fatalf("collect stdout limit = %d", request.CollectStdoutMaxBytes)
 	}
 	decoded, err := io.ReadAll(stdin)
 	if err != nil || !reflect.DeepEqual(decoded, []byte{0, 1, 2, 255}) {
@@ -40,12 +43,93 @@ func TestInvocationBoundary(t *testing.T) {
 		`{"program":"ffmpeg"}`,
 		`{"program":"ffmpeg","args":[],"extra":true}`,
 		`{"program":"ffmpeg","args":[],"stdinBase64":"%%%"}`,
+		`{"program":"ffmpeg","args":[],"collectStdoutMaxBytes":-1}`,
+		fmt.Sprintf(`{"program":"ffmpeg","args":[],"collectStdoutMaxBytes":%d}`, maxCollectedStdoutBytes+1),
 		`{"program":"ffmpeg","args":[],"session":{}}`,
 		`{"program":"ffmpeg","args":[]} {}`,
 	} {
 		if _, _, err := decodeInvocation(invalid); err == nil {
 			t.Fatalf("accepted invalid invocation %s", invalid)
 		}
+	}
+}
+
+func TestRuleGoCollectsBoundedStdoutOnSuccess(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	serverErr := make(chan error, 1)
+	go func() {
+		conn, err := listener.Accept()
+		if err != nil {
+			serverErr <- err
+			return
+		}
+		defer conn.Close()
+		if _, err := readFixtureFrame(conn); err != nil {
+			serverErr <- err
+			return
+		}
+		if message, err := readFixtureFrame(conn); err != nil || message.typ != 0x11 {
+			serverErr <- errors.New("stdin EOF not received")
+			return
+		}
+		for _, message := range []fixtureFrame{
+			{typ: 0x12, payload: []byte{0, 1, 255}},
+			{typ: 0x13, payload: []byte("ignored diagnostic")},
+			{typ: 0x12, payload: []byte{2}},
+			{typ: 0x03, payload: make([]byte, 4)},
+		} {
+			if err := writeFixtureFrame(conn, message.typ, message.payload); err != nil {
+				serverErr <- err
+				return
+			}
+		}
+		serverErr <- nil
+	}()
+
+	if err := rulego.Registry.Register(&ffmpegOverIPNode{}); err != nil {
+		t.Fatal(err)
+	}
+	defer rulego.Registry.Unregister(componentType)
+	dsl := fmt.Sprintf(`{
+		"ruleChain":{"id":"ffoip-collect","root":true},
+		"metadata":{"firstNodeIndex":0,"nodes":[
+			{"id":"client","type":"ffmpegOverIp","configuration":{"address":%q,"authSecret":"secret"}},
+			{"id":"end","type":"end","configuration":{}}
+		],"connections":[
+			{"fromId":"client","toId":"end","type":"Success"},
+			{"fromId":"client","toId":"end","type":"Failure"}
+		]}
+	}`, listener.Addr().String())
+	pool := rulego.NewRuleGo()
+	engine, err := pool.New("ffoip-collect", []byte(dsl), rulego.WithConfig(rulego.NewConfig()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer engine.Stop(nil)
+
+	var outputs []types.RuleMsg
+	msg := types.NewMsgWithJsonData(`{"program":"ffmpeg","args":[],"collectStdoutMaxBytes":4}`)
+	engine.OnMsgAndWait(msg, types.WithOnEnd(func(_ types.RuleContext, output types.RuleMsg, callbackErr error, relation string) {
+		if callbackErr != nil {
+			t.Fatalf("callback error: %v", callbackErr)
+		}
+		if relation != types.Success {
+			t.Fatalf("relation = %s", relation)
+		}
+		outputs = append(outputs, output)
+	}))
+	if err := <-serverErr; err != nil {
+		t.Fatal(err)
+	}
+	if len(outputs) != 1 || !reflect.DeepEqual(outputs[0].GetBytes(), []byte{0, 1, 255, 2}) {
+		t.Fatalf("outputs = %#v", outputs)
+	}
+	if outputs[0].DataType != types.BINARY || outputs[0].Metadata.GetValue(channelKey) != "stdout" || outputs[0].Metadata.GetValue(exitCodeKey) != "0" {
+		t.Fatalf("collected output metadata = %#v", outputs[0])
 	}
 }
 
@@ -95,6 +179,7 @@ func TestProducerBoundary(t *testing.T) {
 		`{"key":"","invocation":{"program":"ffmpeg","args":[]},"awaitFile":"segment.ts","maxBytes":1,"runTimeoutMs":1,"cacheTtlMs":1}`,
 		`{"key":"asset","invocation":{"program":"ffmpeg","args":[]},"awaitFile":"","maxBytes":1,"runTimeoutMs":1,"cacheTtlMs":1}`,
 		`{"key":"asset","invocation":{"program":"ffmpeg","args":[]},"awaitFile":"segment.ts","maxBytes":0,"runTimeoutMs":1,"cacheTtlMs":1}`,
+		`{"key":"asset","invocation":{"program":"ffmpeg","args":[],"collectStdoutMaxBytes":1},"awaitFile":"segment.ts","maxBytes":1,"runTimeoutMs":1,"cacheTtlMs":1}`,
 		`{"key":"asset","invocation":{"program":"ffmpeg","args":[]},"awaitFile":"segment.ts","maxBytes":1,"runTimeoutMs":0,"cacheTtlMs":1}`,
 		`{"key":"asset","invocation":{"program":"ffmpeg","args":[]},"awaitFile":"segment.ts","maxBytes":1,"runTimeoutMs":1,"cacheTtlMs":0}`,
 	} {

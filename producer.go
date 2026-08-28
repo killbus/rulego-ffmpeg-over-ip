@@ -72,7 +72,7 @@ func (*ffmpegOverIPProducerNode) Def() types.ComponentForm {
 		Category:      "external",
 		Label:         "ffmpeg-over-ip producer",
 		Desc:          "Share and bound a remote invocation that produces files",
-		Version:       "0.4.1",
+		Version:       "0.5.0",
 		ComponentKind: types.ComponentKindNative,
 		RelationTypes: &relations,
 	}
@@ -173,6 +173,9 @@ func decodeProducerRequest(data string) (producerRequest, io.Reader, error) {
 	}
 	if request.AwaitFile == "" || len(request.AwaitFile) > 4096 {
 		return request, nil, errors.New("awaitFile is invalid")
+	}
+	if request.Invocation.CollectStdoutMaxBytes != 0 {
+		return request, nil, errors.New("producer invocation cannot collect stdout")
 	}
 	request.AwaitFile = filepath.Clean(request.AwaitFile)
 	if request.MaxBytes <= 0 {
