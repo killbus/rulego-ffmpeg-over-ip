@@ -1,0 +1,8 @@
+{"file":".trellis/spec/backend/error-handling.md","reason":"Verify deterministic failures and safe filesystem boundaries."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Quality gate and focused test expectations."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Reject duplicate HTTP serving and speculative abstractions."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Verify every adapter/provider/origin/HTTP boundary end to end."}
+{"file":".trellis/tasks/08-27-derived-resource-origin/research/native-composition.md","reason":"Check implementation against proven native capabilities and gaps."}
+{"file":".trellis/tasks/08-27-derived-resource-origin/research/youtube-specialization.md","reason":"Check YouTube optimization claims against current evidence."}
+{"file":".trellis/tasks/08-27-derived-resource-origin/research/youtube-index-native-feasibility.md","reason":"Verify the accepted indexed path against recorded playback, bounded-transfer, restart, expiry, and deployment evidence."}
+{"file":".trellis/tasks/08-27-derived-resource-origin/research/acceptance.md","reason":"Verify every cross-repository acceptance criterion and published release claim against the final evidence matrix."}

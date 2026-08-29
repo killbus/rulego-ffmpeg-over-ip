@@ -1,0 +1,7 @@
+{"file":".trellis/spec/backend/index.md","reason":"Backend spec entry point for RuleGo plugin work."}
+{"file":".trellis/spec/backend/error-handling.md","reason":"Trust-boundary and deterministic failure behavior for origin operations."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Project quality and test expectations."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Requires reuse of native RuleGo/static serving before new infrastructure."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Covers source adapter, provider, origin, and HTTP data-plane contracts."}
+{"file":".trellis/tasks/08-27-derived-resource-origin/research/native-composition.md","reason":"Authoritative audit of current producer and RuleGo static-serving composition."}
+{"file":".trellis/tasks/08-27-derived-resource-origin/research/youtube-specialization.md","reason":"Evidence and constraints for the optional YouTube/yt-dlp path."}
