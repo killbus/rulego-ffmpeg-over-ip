@@ -96,3 +96,24 @@ Delivered bounded indexed VOD composition across ffmpeg-over-ip, indexed-vod, an
 ### Next Steps
 
 - Operator may complete the user-owned Emby/Kodi terminal playback matrix.
+
+
+## Session 4: Finalize derived resource origin acceptance
+
+**Date**: 2026-08-29
+**Task**: Finalize derived resource origin acceptance
+**Branch**: `master`
+
+### Summary
+
+Finalized task-owned GET/Range/validator/atomic-readiness acceptance, retained RuleGo HEAD as informational host behavior only, verified published ffmpeg-over-ip v0.5.1, indexed-vod v0.2.0, and resource-origin v0.1.1 artifacts plus green CI and hermetic HLS seek/concurrency/restart/expiry evidence, completed independent GOV-13 audit, and archived the task.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `342134354d9d767f63685a672be192b1919f984c` | (see git log) |
+
+### Status
+
+[OK] **Completed**
