@@ -56,3 +56,43 @@ Published v0.2.0 from CI-built amd64/arm64 plugins using TEAM B's digest-pinned 
 ### Status
 
 [OK] **Completed**
+
+
+## Session 3: Complete derived resource origin delivery
+
+**Date**: 2026-08-29
+**Task**: Complete derived resource origin delivery
+**Branch**: `master`
+
+### Summary
+
+Delivered bounded indexed VOD composition across ffmpeg-over-ip, indexed-vod, and resource-origin; verified released artifacts, plugin coexistence, lifecycle behavior, online static publication, concurrent member reuse, and distant HLS seek.
+
+### Main Changes
+
+- Preserved generic FFmpeg transport, indexed-member production, and resource lifecycle ownership boundaries.
+- Published and verified ffmpeg-over-ip v0.5.1, indexed-vod v0.2.0, and resource-origin v0.1.1.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `254f9ea` | (see git log) |
+| `e4dc4a7` | (see git log) |
+| `d79e08b` | (see git log) |
+| `853e64d` | (see git log) |
+| `d8b3a80` | (see git log) |
+| `2729a77` | (see git log) |
+
+### Testing
+
+- [OK] GitHub CI and release workflows passed for all three repositories; amd64/arm64 plugin co-load passed in both load orders.
+- [OK] Online manifest, redirect, static GET/Range, concurrent distant member, and mpv 1800-second seek passed.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- Operator may complete the user-owned Emby/Kodi terminal playback matrix.
