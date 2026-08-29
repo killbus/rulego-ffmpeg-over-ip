@@ -109,7 +109,7 @@ the producer's close-based readiness check.
 | Safe publication | file close is detected, but mapped paths can be fetched before the origin publishes them | Missing publication barrier |
 | Resource set | all closed paths are observed, but no durable set membership or atomic manifest/member commit exists | Missing |
 | Ready-file Range | native `FileServer`/`ServeContent` supplies GET and Range semantics | Satisfied for immutable files |
-| Ready-file HEAD | released static router registers GET only | Missing in current host |
+| Optional ready-file HEAD | released static router registers GET only | Informational host-version behavior |
 | Sequential response | `ffmpegOverIp` plus `ffmpegOverIpResponse` streams/flushed stdout | Already satisfied; keep separate |
 
 The current cleanup is intentionally conservative: after the remote process
@@ -144,8 +144,9 @@ not a media session and not a byte server. Its minimum responsibilities are:
 RuleGo already exposes response body, status, and header mutation in its REST
 endpoint/output processor APIs, so the status/redirect projection can share
 the current HTTP endpoint. The static mapping remains responsible only for
-ready immutable bytes. The host needs explicit static HEAD registration (or a
-host version that includes it); all other lifecycle behavior is origin-owned.
+ready immutable bytes. Static method registration beyond the task-owned
+retrieval contract remains host-version behavior; all lifecycle behavior is
+origin-owned.
 
 The producer should emit a provider-neutral completion descriptor to the
 origin (job identity plus closed member paths and terminal result). It should
@@ -172,8 +173,8 @@ codec, or yt-dlp field belongs in the generic origin contract.
 
 ## Acceptance impact
 
-- Native composition can cover the data-plane part of AC2 after the small
-  static HEAD fix, and it preserves AC8.
+- Native composition covers AC2's GET/Range/conditional data plane and
+  preserves AC8.
 - The existing producer contributes part of AC3/AC4 (closed members and
   node-local reuse) but does not complete them.
 - AC1 and AC3-AC7 require the generic origin catalog/publication behavior

@@ -6,3 +6,5 @@
 {"file":".trellis/tasks/08-27-derived-resource-origin/research/youtube-specialization.md","reason":"Check YouTube optimization claims against current evidence."}
 {"file":".trellis/tasks/08-27-derived-resource-origin/research/youtube-index-native-feasibility.md","reason":"Verify the accepted indexed path against recorded playback, bounded-transfer, restart, expiry, and deployment evidence."}
 {"file":".trellis/tasks/08-27-derived-resource-origin/research/acceptance.md","reason":"Verify every cross-repository acceptance criterion and published release claim against the final evidence matrix."}
+{"file": ".trellis/tasks/08-27-derived-resource-origin/research/e2e-test-convergence.md", "reason": "Verify the implemented E2E gate is revision-bound and does not expand plugin ownership."}
+{"file": ".trellis/tasks/08-27-derived-resource-origin/research/emby-strm-hls-compatibility.md", "reason": "Verify Emby terminal debt is evidence-based and does not leak terminal-specific behavior into generic plugins."}

@@ -6,7 +6,7 @@ The system has three independent responsibilities:
 
 ```text
 source adapter -> transformation provider -> resource origin -> RuleGo static files
- yt-dlp facts       ffmpeg-over-ip          lifecycle/state       GET/HEAD/Range
+ yt-dlp facts       ffmpeg-over-ip          lifecycle/state       GET/Range
 ```
 
 - A source adapter resolves short-lived provider inputs. YouTube/yt-dlp is one
@@ -192,10 +192,9 @@ The origin does not serve bytes. A RuleGo REST route invokes `acquire` and:
 - leaves `GET`, byte ranges, lengths, `Last-Modified`, and conditional requests
   to `http.FileServer`/`http.ServeContent`.
 
-The released `v0.37.0-plugin` host registers only `GET` for static mappings.
-The host must add the missing `HEAD` registration (already present in the later
-local server source) before AC2 can pass. This is a host fix, not a reason to
-duplicate its file server.
+Static-route method registration outside the exercised GET/Range/conditional
+contract is host-version behavior. It is not plugin work, an acceptance gate,
+or a reason to duplicate the host file server.
 
 ## 6. FFmpeg provider integration
 
@@ -247,8 +246,8 @@ at ownership boundaries:
 
 - the generic origin is released from its own RuleGo plugin repository against
   the same immutable Plugin ABI contract used by the host;
-- the host release supplies static `HEAD` plus its existing GET/Range data
-  plane;
+- the pinned host supplies the shared listener and native GET/Range/conditional
+  data plane;
 - this repository supplies the versioned ffmpeg-over-ip client and independent
   generic RuleGo entrypoint; and
 - the source-neutral `indexedVod` component lives in its own repository while

@@ -145,5 +145,5 @@ Final Emby/Kodi playback remains operator-owned acceptance. The direct mpv
 command after the host mapping is active is:
 
 ```text
-mpv --no-ytdl http://rulego.docker.pve:6333/youtube/Z4tHPyZBC8g/index.m3u8
+mpv --no-ytdl http://rulego.docker.pve/youtube/Z4tHPyZBC8g/index.m3u8
 ```

@@ -74,11 +74,12 @@ without turning the generic resource contract into a YouTube contract.
 - **R7 — Stable ownership:** Resource naming, serving, and cleanup must remain
   coherent across rule hot-deploy and process restart. Startup reconciliation
   must reclaim orphaned owned artifacts without touching unrelated files.
-- **R8 — Correct HTTP behavior:** A ready single resource supports validators,
-  `HEAD`, satisfiable and unsatisfiable Range requests, and accurate response
-  lengths/statuses. A resource-set manifest may advertise not-yet-materialized
-  members only through stable demand routes that can acquire and serve their
-  bounded production unit under the same published lifecycle. A demanded
+- **R8 — Correct HTTP behavior:** A ready single resource supports full `GET`,
+  validators, satisfiable and unsatisfiable Range requests, accurate response
+  lengths/statuses, and is not exposed before atomic readiness. A resource-set
+  manifest may advertise not-yet-materialized members only through stable
+  demand routes that can acquire and serve their bounded production unit under
+  the same published lifecycle. A demanded
   member's absolute expiry cannot exceed its parent set's expiry, and its route
   refuses acquisition after the parent expires.
 - **R9 — Transformation neutrality:** Callers supply transformation arguments
@@ -112,9 +113,9 @@ without turning the generic resource contract into a YouTube contract.
 - [ ] **AC1:** A generic non-YouTube transformation can publish one resource,
   return its address before the caller's RuleGo node is destroyed, and serve it
   until its declared expiry independently of that node instance.
-- [ ] **AC2:** A ready single resource passes HTTP checks for full `GET`,
-  `HEAD`, a valid byte range (`206` with correct `Content-Range`), an invalid
-  range (`416`), and validator-based conditional retrieval.
+- [ ] **AC2:** A ready single resource passes HTTP checks for full `GET`, a valid
+  byte range (`206` with correct `Content-Range` and length), an invalid range
+  (`416`), validator-based conditional retrieval, and atomic readiness.
 - [ ] **AC3:** A generic transformation can publish a manifest plus at least
   two independently retrievable members. Requesting a non-materialized member
   triggers one bounded production unit and resolves to the completed member;

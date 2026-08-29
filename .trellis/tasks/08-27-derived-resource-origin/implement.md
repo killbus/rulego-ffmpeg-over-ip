@@ -50,10 +50,9 @@ later still expires no later than its parent.
   bounded production unit, waits for shared production within the endpoint
   deadline, and redirects only to a committed static member.
 - Configure static mapping only for the origin's `ready` directory.
-- Verify full GET, valid/invalid Range, conditional retrieval, and that staging
-  paths are unreachable.
-- Require a host release with static HEAD registration and verify HEAD there;
-  do not add an HTTP listener or copy `ServeContent` into the plugin.
+- Verify full GET, valid/invalid Range, exact response lengths, conditional
+  retrieval, atomic readiness, and that staging paths are unreachable. Do not
+  add an HTTP listener or copy `ServeContent` into the plugin.
 
 Checks: two equivalent concurrent requests execute one production path and
 receive the same resource URL; a different fingerprint receives a distinct

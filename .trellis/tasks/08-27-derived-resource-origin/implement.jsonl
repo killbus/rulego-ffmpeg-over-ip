@@ -5,3 +5,5 @@
 {"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Covers source adapter, provider, origin, and HTTP data-plane contracts."}
 {"file":".trellis/tasks/08-27-derived-resource-origin/research/native-composition.md","reason":"Authoritative audit of current producer and RuleGo static-serving composition."}
 {"file":".trellis/tasks/08-27-derived-resource-origin/research/youtube-specialization.md","reason":"Evidence and constraints for the optional YouTube/yt-dlp path."}
+{"file": ".trellis/tasks/08-27-derived-resource-origin/research/e2e-test-convergence.md", "reason": "Implemented executable system-acceptance gate and its ownership boundary."}
+{"file": ".trellis/tasks/08-27-derived-resource-origin/research/emby-strm-hls-compatibility.md", "reason": "Operator-terminal compatibility evidence; preserve generic plugin boundaries while interactive seek remains user-owned."}
