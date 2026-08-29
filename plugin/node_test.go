@@ -782,7 +782,7 @@ func TestRESTDisconnectCancelsRemoteSession(t *testing.T) {
 	}
 	select {
 	case <-started:
-	default:
+	case <-time.After(time.Second):
 		t.Fatal("stdout was not flushed before remote completion")
 	}
 	cancel()

@@ -21,7 +21,10 @@ jobs:
         run: |
           test "$(jq -er .pluginVersion compatibility.json)" = "$(cat VERSION)"
           test "$(jq -er .pluginAbiRelease compatibility.json)" = plugin-abi-release.json
-          grep -Fq "Version:       \"$(cat VERSION)\"" node.go
+          grep -Fq "Version:       \"$(cat VERSION)\"" plugin/node.go
+          grep -Fq "Version:       \"$(cat VERSION)\"" plugin/producer.go
+          test "$(awk '$1 == "github.com/killbus/rulego-ffmpeg-over-ip" { print $2 }' plugin/go.mod)" = v0.5.0
+          ! grep -Eq '^[[:space:]]*replace[[:space:](]' plugin/go.mod
           jq -e '
             (.abi_id | test("^abi-[0-9a-f]{64}$")) and
             (.lock_digest | test("^sha256:[0-9a-f]{64}$")) and
@@ -30,11 +33,15 @@ jobs:
             (.runtime | test("^ghcr\\.io/killbus/rulego-server@sha256:[0-9a-f]{64}$"))
           ' plugin-abi-release.json
       - run: go mod download
+      - run: GOWORK=off go -C plugin mod download
       - name: Formatting
         run: test -z "$(gofmt -l .)"
       - run: go vet ./...
+      - run: GOWORK=off go -C plugin vet ./...
       - run: go test ./...
+      - run: GOWORK=off go -C plugin test ./...
       - run: go test -race ./...
+      - run: GOWORK=off go -C plugin test -race ./...
 
   pinned-upstream:
     runs-on: ubuntu-24.04
@@ -132,6 +139,7 @@ jobs:
           set -euo pipefail
           install -d -m 0777 plugin/dist
           docker run --rm --platform "linux/${{ matrix.arch }}" \
+            -e RULEGO_PLUGIN_SOURCE=/workspace/plugin \
             -v "$GITHUB_WORKSPACE/plugin:/workspace:ro" \
             -v "$GITHUB_WORKSPACE/plugin/dist:/output" \
             "$SDK_REF" . "/output/$PLUGIN_ARTIFACT"
@@ -146,6 +154,71 @@ jobs:
               .abi_id == $abi and .lock_digest == $lock and
               .platform == $platform and .plugin_sha256 == $sha
             ' "$PLUGIN_ARTIFACT.abi.json"
+      - name: Download verified coexistence releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          release_dir="$GITHUB_WORKSPACE/plugin/tmp/coexistence"
+          mkdir -p "$release_dir"
+          download_release() {
+            repo="$1"
+            tag="$2"
+            artifact="$3"
+            for attempt in 1 2 3 4; do
+              rm -f "$release_dir/$artifact" "$release_dir/$artifact.sha256" "$release_dir/$artifact.abi.json"
+              if gh release download "$tag" --repo "$repo" --dir "$release_dir" \
+                --pattern "$artifact" --pattern "$artifact.sha256" --pattern "$artifact.abi.json"; then
+                return
+              fi
+              test "$attempt" -lt 4
+              sleep $((2 ** attempt))
+            done
+          }
+          indexed_artifact="indexed-vod-rulego-v0.2.0-linux-${{ matrix.arch }}.so"
+          origin_artifact="resource-origin-rulego-v0.1.1-linux-${{ matrix.arch }}.so"
+          download_release killbus/rulego-indexed-vod v0.2.0 "$indexed_artifact"
+          download_release killbus/rulego-resource-origin v0.1.1 "$origin_artifact"
+          (
+            cd "$release_dir"
+            sha256sum --check "$indexed_artifact.sha256"
+            sha256sum --check "$origin_artifact.sha256"
+          )
+          for artifact in "$indexed_artifact" "$origin_artifact"; do
+            artifact_sha256=$(sha256sum "$release_dir/$artifact" | awk '{print $1}')
+            jq -e --arg abi "$ABI_ID" --arg lock "$LOCK_DIGEST" \
+              --arg platform "linux/${{ matrix.arch }}" --arg sha "$artifact_sha256" '
+                .abi_id == $abi and .lock_digest == $lock and
+                .platform == $platform and .plugin_sha256 == $sha
+              ' "$release_dir/$artifact.abi.json"
+          done
+          {
+            echo "INDEXED_ARTIFACT=$indexed_artifact"
+            echo "ORIGIN_ARTIFACT=$origin_artifact"
+          } >> "$GITHUB_ENV"
+      - name: Verify shared client module identity
+        run: |
+          set -euo pipefail
+          build_info="$GITHUB_WORKSPACE/plugin/tmp/build-info"
+          mkdir -p "$build_info"
+          docker run --rm --platform "linux/${{ matrix.arch }}" --entrypoint go \
+            -v "$GITHUB_WORKSPACE/plugin/dist:/candidate:ro" \
+            -v "$GITHUB_WORKSPACE/plugin/tmp/coexistence:/coexistence:ro" \
+            "$SDK_REF" version -m "/candidate/$PLUGIN_ARTIFACT" >"$build_info/ffmpeg.txt"
+          docker run --rm --platform "linux/${{ matrix.arch }}" --entrypoint go \
+            -v "$GITHUB_WORKSPACE/plugin/tmp/coexistence:/coexistence:ro" \
+            "$SDK_REF" version -m "/coexistence/$INDEXED_ARTIFACT" >"$build_info/indexed.txt"
+          grep -Fq $'mod\tgithub.com/killbus/rulego-ffmpeg-over-ip/plugin\t(devel)' "$build_info/ffmpeg.txt"
+          client_identity() {
+            awk '$1 == "dep" && $2 == "github.com/killbus/rulego-ffmpeg-over-ip" {
+              print $2 "\t" $3 "\t" $4
+            }' "$1"
+          }
+          ffmpeg_client=$(client_identity "$build_info/ffmpeg.txt")
+          indexed_client=$(client_identity "$build_info/indexed.txt")
+          test -n "$ffmpeg_client"
+          test "$ffmpeg_client" = "$indexed_client"
+          test "$ffmpeg_client" = $'github.com/killbus/rulego-ffmpeg-over-ip\tv0.5.0\th1:4jeQQTATep8oP1BumDO/DftVAxlDz1SYzU6eA0xxfwU='
       - name: Pull pinned runtime with bounded retry
         run: |
           set -euo pipefail
@@ -155,29 +228,66 @@ jobs:
             sleep $((2 ** attempt))
           done
           test "$(docker image inspect --format '{{ index .Config.Labels "io.rulego.server.release" }}' "$RUNTIME_REF")" = "$(jq -er .rulegoRelease plugin/compatibility.json)"
-      - name: Smoke-load plugin with pinned runtime
+      - name: Smoke-load three plugins in both load orders
         run: |
           set -euo pipefail
-          mkdir -p plugin/tmp/data/plugins
-          cp "plugin/dist/$PLUGIN_ARTIFACT" plugin/tmp/data/plugins/
-          chmod -R a+rwX plugin/tmp/data
-          container="ffmpeg-over-ip-smoke-${{ matrix.arch }}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          docker run --rm --detach --name "$container" \
-            --platform "linux/${{ matrix.arch }}" -p 127.0.0.1:9090:9090 \
-            -v "$GITHUB_WORKSPACE/plugin/tmp/data:/app/data" "$RUNTIME_REF"
-          trap 'docker rm -f "$container" >/dev/null 2>&1 || true' EXIT
-          for attempt in $(seq 1 100); do
-            if curl --fail --silent http://127.0.0.1:9090/api/v1/components >plugin/tmp/components.json; then break; fi
-            if test "$(docker inspect --format='{{.State.Running}}' "$container")" != true; then
-              docker logs "$container"
-              exit 1
-            fi
-            sleep 0.2
-          done
-          test -s plugin/tmp/components.json || { docker logs "$container"; exit 1; }
-          jq -e '.nodes | any(.type == "ffmpegOverIp")' plugin/tmp/components.json
-          jq -e '.nodes | any(.type == "ffmpegOverIpProducer")' plugin/tmp/components.json
-          jq -e '.builtins.endpoints.outProcessors | index("ffmpegOverIpResponse") != null' plugin/tmp/components.json
+          current="$GITHUB_WORKSPACE/plugin/dist/$PLUGIN_ARTIFACT"
+          indexed="$GITHUB_WORKSPACE/plugin/tmp/coexistence/$INDEXED_ARTIFACT"
+          origin="$GITHUB_WORKSPACE/plugin/tmp/coexistence/$ORIGIN_ARTIFACT"
+          container=""
+          cleanup() {
+            if test -n "$container"; then docker rm -f "$container" >/dev/null 2>&1 || true; fi
+          }
+          trap cleanup EXIT
+          smoke_order() {
+            order="$1"
+            data="$GITHUB_WORKSPACE/plugin/tmp/smoke-$order/data"
+            rm -rf "$data"
+            mkdir -p "$data/plugins"
+            case "$order" in
+              ffmpeg-first)
+                cp "$current" "$data/plugins/01-ffmpeg.so"
+                cp "$indexed" "$data/plugins/02-indexed.so"
+                cp "$origin" "$data/plugins/03-origin.so"
+                ;;
+              indexed-first)
+                cp "$indexed" "$data/plugins/01-indexed.so"
+                cp "$origin" "$data/plugins/02-origin.so"
+                cp "$current" "$data/plugins/03-ffmpeg.so"
+                ;;
+            esac
+            chmod -R a+rwX "$data"
+            container="ffmpeg-coexist-${order}-${{ matrix.arch }}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+            docker run --rm --detach --name "$container" \
+              --platform "linux/${{ matrix.arch }}" -p 127.0.0.1:9090:9090 \
+              -v "$data:/app/data" "$RUNTIME_REF"
+            for attempt in $(seq 1 100); do
+              if curl --fail --silent http://127.0.0.1:9090/api/v1/components \
+                >"plugin/tmp/smoke-$order/components.json"; then break; fi
+              if test "$(docker inspect --format='{{.State.Running}}' "$container")" != true; then
+                docker logs "$container"
+                exit 1
+              fi
+              sleep 0.2
+            done
+            components="plugin/tmp/smoke-$order/components.json"
+            test -s "$components" || { docker logs "$container"; exit 1; }
+            jq -e '
+              (.nodes | any(.type == "ffmpegOverIp")) and
+              (.nodes | any(.type == "ffmpegOverIpProducer")) and
+              (.nodes | any(.type == "indexedVod")) and
+              (.nodes | any(.type == "resourceOrigin")) and
+              (.builtins.endpoints.outProcessors | index("ffmpegOverIpResponse") != null) and
+              (.builtins.endpoints.outProcessors | index("resourceOriginResponse") != null)
+            ' "$components"
+            docker logs "$container" >"plugin/tmp/smoke-$order/runtime.log" 2>&1
+            ! grep -Eiq 'plugin was built with a different version of package|failed to load plugin|load plugin.*(error|failed)' \
+              "plugin/tmp/smoke-$order/runtime.log"
+            docker rm -f "$container" >/dev/null
+            container=""
+          }
+          smoke_order ffmpeg-first
+          smoke_order indexed-first
       - uses: actions/upload-artifact@v4
         with:
           name: plugin-linux-${{ matrix.arch }}
