@@ -1,7 +1,7 @@
 {
-  "pluginVersion": "0.5.1",
+  "pluginVersion": "0.5.2",
   "pluginAbiRelease": "plugin-abi-release.json",
-  "rulegoRelease": "v0.37.0",
+  "rulegoRelease": "v1.0.0",
   "ffmpegOverIp": {
     "version": "v5.2.1",
     "revision": "ab7adfeedf2a50f7e5807beef9088609cce645d6",
