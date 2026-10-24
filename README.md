@@ -98,10 +98,13 @@ The REST processor writes and flushes only stdout. The generic example is in
 
 Release binaries are built in GitHub Actions with the digest-pinned SDK in
 [`plugin-abi-release.json`](plugin-abi-release.json), then smoke-loaded by its
-matching runtime together with the supported indexed-vod and resource-origin
-release plugins. The RuleGo entrypoint lives in [`plugin`](plugin) as a
-separate Go module and consumes this repository's released client module; this
-keeps the shared client package identity equal across co-loaded plugins. Each
+matching runtime alone. The plugin set's co-existence (loading the published
+plugins of this batch in one process) is verified separately by
+[`killbus/rulego-fleet`](https://github.com/killbus/rulego-fleet) against the
+set it declares. The RuleGo entrypoint lives in [`plugin`](plugin) as a
+separate Go module and consumes this repository's released client module; the
+Go plugin loader enforces a single identity for the shared client across
+whatever is co-loaded. Each
 `.so` ships with `.sha256` and `.abi.json` sidecars. Go
 plugin ABI requirements make local ad-hoc builds unsafe for deployment; see
 [COMPATIBILITY.md](COMPATIBILITY.md).
